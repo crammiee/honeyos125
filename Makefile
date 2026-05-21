@@ -11,7 +11,8 @@ LDFLAGS := -m elf_i386 -T linker.ld --oformat binary
 BUILD   := build
 BOOT    := boot
 
-C_SRCS  := kernel/main.c
+C_SRCS  := kernel/main.c          \
+            kernel/screen/vga.c
 
 ASM_SRCS := kernel/kernel_entry.asm
 
