@@ -1,0 +1,5 @@
+build/
+disk.img
+*.bin
+*.o
+qemu.log
