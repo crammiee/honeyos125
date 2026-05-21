@@ -12,7 +12,10 @@ BUILD   := build
 BOOT    := boot
 
 C_SRCS  := kernel/main.c          \
-            kernel/screen/vga.c
+            kernel/screen/vga.c    \
+            kernel/io/ports.c      \
+            kernel/io/keyboard.c   \
+            kernel/shell/shell.c
 
 ASM_SRCS := kernel/kernel_entry.asm
 
