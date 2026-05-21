@@ -15,7 +15,10 @@ C_SRCS  := kernel/main.c          \
             kernel/screen/vga.c    \
             kernel/io/ports.c      \
             kernel/io/keyboard.c   \
-            kernel/shell/shell.c
+            kernel/shell/shell.c   \
+            kernel/fs/fat.c        \
+            kernel/fs/file.c       \
+            kernel/fs/dir.c
 
 ASM_SRCS := kernel/kernel_entry.asm
 
