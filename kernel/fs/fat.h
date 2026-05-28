@@ -9,12 +9,12 @@
 #define SECTOR_SIZE             512
 #define DISK_SECTORS            2880
 
-#define SUPERBLOCK_SECTOR       1
-#define FAT_START_SECTOR        2
+#define SUPERBLOCK_SECTOR       33   /* sectors 1-32 are the kernel binary */
+#define FAT_START_SECTOR        34
 #define FAT_SECTORS             16   /* 16 × 512 = 8 192 bytes → 4 096 uint16_t entries */
-#define ROOT_DIR_SECTOR         18
+#define ROOT_DIR_SECTOR         50   /* = FAT_START_SECTOR + FAT_SECTORS */
 #define ROOT_DIR_SECTORS        32
-#define DATA_START_SECTOR       50
+#define DATA_START_SECTOR       82   /* = ROOT_DIR_SECTOR + ROOT_DIR_SECTORS */
 
 #define FAT_MAX_ENTRIES  (FAT_SECTORS * SECTOR_SIZE / sizeof(uint16_t))  /* 4 096 */
 

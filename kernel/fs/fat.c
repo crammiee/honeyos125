@@ -18,9 +18,7 @@
 
 #include "fat.h"
 #include "../screen/vga.h"
-
-/* In-memory disk image (~1.44 MB, lives in BSS — zero-initialised at boot) */
-static uint8_t disk_image[DISK_SECTORS * SECTOR_SIZE];
+#include "../io/ata.h"
 
 /* Cached copy of the FAT table */
 static uint16_t fat_table[FAT_MAX_ENTRIES];
@@ -39,12 +37,6 @@ static void mem_set(void *dst, uint8_t val, size_t n) {
     while (n--) *p++ = val;
 }
 
-static void mem_copy(void *dst, const void *src, size_t n) {
-    uint8_t       *d = (uint8_t *)dst;
-    const uint8_t *s = (const uint8_t *)src;
-    while (n--) *d++ = *s++;
-}
-
 /* Compare a space-padded FAT name field against a plain C string */
 static int name_matches(const char *field, int flen, const char *plain) {
     int i = 0;
@@ -61,11 +53,11 @@ static int name_matches(const char *field, int flen, const char *plain) {
  * --------------------------------------------------------------------- */
 
 void sector_read(uint16_t lba, uint8_t *buf) {
-    mem_copy(buf, disk_image + (uint32_t)lba * SECTOR_SIZE, SECTOR_SIZE);
+    ata_read((uint32_t)lba, buf);
 }
 
 void sector_write(uint16_t lba, const uint8_t *buf) {
-    mem_copy(disk_image + (uint32_t)lba * SECTOR_SIZE, buf, SECTOR_SIZE);
+    ata_write((uint32_t)lba, buf);
 }
 
 /* -----------------------------------------------------------------------
@@ -87,7 +79,7 @@ void fat_set(uint16_t block, uint16_t val) {
 }
 
 uint16_t fat_alloc(void) {
-    for (uint16_t i = DATA_START_SECTOR; i < FAT_MAX_ENTRIES; i++) {
+    for (uint16_t i = DATA_START_SECTOR; i < DISK_SECTORS; i++) {
         if (fat_table[i] == FAT_FREE) { fat_set(i, FAT_EOC); return i; }
     }
     return FAT_EOC;   /* disk full */
@@ -153,8 +145,6 @@ static void fat_load(void) {
 }
 
 static void fs_format(void) {
-    mem_set(disk_image, 0, sizeof(disk_image));
-
     superblock_t sb;
     mem_set(&sb, 0, sizeof(sb));
     sb.magic         = FS_MAGIC;

@@ -25,47 +25,17 @@ start:
     call print_string
 
     ; ------------------------------------------------------------------
-    ; Load the kernel one sector at a time using CHS (INT 0x13, AH=02h).
-    ; Single-sector calls avoid the track-boundary restriction: a 1.44 MB
-    ; floppy has 18 sectors per track, so multi-sector reads that cross a
-    ; track boundary will fail.
-    ;
-    ; Disk layout: sector 0 = MBR (this file), sector 1+ = kernel.
-    ; CHS for a 1.44 MB floppy: 80 cylinders, 2 heads, 18 sectors/track.
+    ; Load the kernel using INT 0x13 AH=42h (LBA Extended Read).
+    ; Works for any drive geometry — required for HDA (-hda in QEMU).
     ; ------------------------------------------------------------------
     mov ax, KERNEL_LOAD_SEG
-    mov es, ax
-    xor bx, bx              ; ES:BX = destination buffer (0x1000)
+    mov es, ax              ; destination segment (linear 0x1000)
 
-    mov ch, 0               ; cylinder 0
-    mov dh, 0               ; head 0
-    mov cl, 2               ; sector 2 (1-based; sector 1 = MBR)
+    mov si, dap
+    mov ah, 0x42
     mov dl, [boot_drive]
-
-    mov si, KERNEL_SECTORS  ; loop counter
-
-.read_loop:
-    mov ah, 0x02
-    mov al, 1               ; one sector per call
     int 0x13
     jc  disk_error
-
-    add bx, 512
-
-    dec si
-    jz  .load_done
-
-    ; Advance CHS: sectors 1-18, then next head, then next cylinder
-    inc cl
-    cmp cl, 19
-    jb  .read_loop
-    mov cl, 1
-    inc dh
-    cmp dh, 2
-    jb  .read_loop
-    mov dh, 0
-    inc ch
-    jmp .read_loop
 
 .load_done:
 
@@ -129,6 +99,16 @@ enable_a20:
 boot_drive   db 0
 msg_loading  db "Loading HoneyOS...", 0x0D, 0x0A, 0
 msg_disk_err db "Disk read error!", 0x0D, 0x0A, 0
+
+; Disk Address Packet for INT 13h AH=42h (LBA Extended Read)
+align 2
+dap:
+    db  0x10            ; DAP size = 16 bytes
+    db  0               ; reserved
+    dw  KERNEL_SECTORS  ; sectors to transfer
+    dw  0x0000          ; buffer offset (ES:0x0000 → linear 0x1000)
+    dw  0x0100          ; buffer segment
+    dq  1               ; LBA of first sector (kernel starts at sector 1)
 
 ; ------------------------------------------------------------------
 ; GDT

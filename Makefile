@@ -14,6 +14,7 @@ BOOT    := boot
 C_SRCS  := kernel/main.c          \
             kernel/screen/vga.c    \
             kernel/io/ports.c      \
+            kernel/io/ata.c        \
             kernel/io/keyboard.c   \
             kernel/shell/shell.c   \
             kernel/fs/fat.c        \
@@ -54,10 +55,10 @@ $(BUILD)/kernel/%.o: kernel/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 run: all
-	$(QEMU) -fda disk.img -display curses -no-reboot
+	$(QEMU) -hda disk.img -display curses -no-reboot
 
 run-debug: all
-	$(QEMU) -fda disk.img -display curses -no-reboot \
+	$(QEMU) -hda disk.img -display curses -no-reboot \
 	        -serial stdio -d int,cpu_reset 2>&1 | tee qemu.log
 
 clean:

@@ -10,7 +10,7 @@ fi
 
 if [ "$1" = "--debug" ]; then
     exec qemu-system-i386 \
-        -fda "$DISK"       \
+        -hda "$DISK"       \
         -display curses    \
         -no-reboot         \
         -serial stdio      \
@@ -18,7 +18,7 @@ if [ "$1" = "--debug" ]; then
         2>&1 | tee qemu.log
 else
     exec qemu-system-i386 \
-        -fda "$DISK"       \
+        -hda "$DISK"       \
         -display curses    \
         -no-reboot
 fi
