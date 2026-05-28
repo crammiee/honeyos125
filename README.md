@@ -4,12 +4,26 @@ A minimal x86 hobby OS built from scratch. Boots via a custom MBR, runs a freest
 
 ## Features
 
-- MBR bootloader (NASM, 512 bytes)
-- 32-bit protected-mode kernel in C
-- VGA text-mode display
-- PS/2 keyboard driver
-- FAT filesystem with linked allocation (files, directories, nested `cd`)
-- Interactive shell: `ls`, `mkdir`, `cd`, `cat`, `write`, `edit`, `rm`, `shutdown`
+### Bootloader
+A hand-written 512-byte MBR (`boot/boot.asm`). On boot the BIOS loads it at `0x7C00`. It reads the kernel from disk using INT 13h LBA extended read, enables the A20 line via the keyboard controller, installs a flat GDT (two 4 GB ring-0 segments), sets `CR0.PE`, and far-jumps into 32-bit protected mode before handing off to the kernel at `0x1000`.
+
+### Kernel
+Entered from `kernel/kernel_entry.asm`, which sets up the stack at `0x90000`, zeroes BSS, then calls `kernel_main()`. The kernel is compiled as a freestanding 32-bit ELF and linked to a flat binary by `linker.ld` — no libc, no runtime, no ELF header in the final image.
+
+### VGA Display
+Direct memory-mapped output to the VGA text buffer at `0xB8000` (`kernel/screen/vga.c`). Each character is a two-byte cell (ASCII + color attribute). Supports scrolling, backspace, and color changes. Used by the shell, filesystem, and kernel messages.
+
+### PS/2 Keyboard
+Polling driver (`kernel/io/keyboard.c`) that reads scancodes from port `0x60` and translates them to ASCII using a US QWERTY scancode table. Handles key-up events and modifier keys (shift). Exposes a single `keyboard_getchar()` call that the shell reads character by character.
+
+### FAT Filesystem
+A FAT16-style linked-allocation filesystem (`kernel/fs/`). The disk is divided into a superblock, a FAT table (16 sectors), a root directory region (32 sectors), and data blocks. Each FAT entry is a `uint16_t`: `0x0000` = free, `0xFFFF` = end of chain, otherwise the index of the next block. File and directory metadata is stored as 32-byte 8.3-format entries. On first boot the disk is formatted; subsequent boots detect the magic number `0x484F4E45` ("HONE") in the superblock and mount the existing filesystem.
+
+### ATA PIO Disk I/O
+Sector reads and writes go directly to the emulated hard disk via ATA PIO (`kernel/io/ata.c`). The driver polls the primary bus status register (`0x1F7`), programs a LBA28 address, issues the read (`0x20`) or write (`0x30`) command, then transfers 256 16-bit words through the data register (`0x1F0`). Writes are followed by a cache flush (`0xE7`). This is what makes the filesystem persistent — data survives reboots because it is written into `disk.img` on the host.
+
+### Shell
+A REPL loop (`kernel/shell/shell.c`) that prints a prompt, reads a line character by character, tokenises on spaces, and dispatches to a static command table. Supports `ls`, `mkdir`, `cd`, `cat`, `write`, `edit`, `rm`, `help`, and `shutdown`. `shutdown` writes `0x2000` to port `0x604` (QEMU ACPI poweroff) and halts with `cli; hlt`.
 
 ## Getting Started
 
