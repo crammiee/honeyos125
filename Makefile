@@ -28,7 +28,7 @@ ASM_OBJS := $(patsubst %.asm, $(BUILD)/%.o, $(ASM_SRCS))
 
 ALL_OBJS := $(ASM_OBJS) $(C_OBJS)
 
-.PHONY: all run run-debug run-iso iso clean
+.PHONY: all run run-debug run-iso run-iso-persist iso clean
 
 all: disk.img
 
@@ -62,18 +62,24 @@ run-debug: all
 	        -serial stdio -d int,cpu_reset 2>&1 | tee qemu.log
 
 # Wrap the floppy-sized disk image in a bootable ISO (floppy-emulation
-# El Torito) so the custom MBR boots from a CD/DVD in any VM. HoneyOS keeps its
-# filesystem on the ATA hard disk, so the ISO is meant to be booted together
-# with disk.img attached as a hard disk (see run-iso); the CD just carries the
-# bootable kernel, and the disk holds (and persists) your files.
+# El Torito) so the custom MBR boots straight from a CD/DVD in any VM. The ISO
+# is fully standalone: when no hard disk is attached, HoneyOS runs an in-RAM
+# filesystem (changes are not saved). Attach disk.img as a hard disk too and the
+# filesystem persists there instead — see run-iso / run-iso-persist.
 iso: disk.img
 	@mkdir -p $(BUILD)/iso
 	cp disk.img $(BUILD)/iso/honeyos.img
 	xorriso -as mkisofs -quiet -o honeyos.iso \
 	        -b honeyos.img -c boot.cat $(BUILD)/iso
-	@echo "[OK] honeyos.iso ready (boot from CD, filesystem on the hard disk)"
+	@echo "[OK] honeyos.iso ready (boots standalone; RAM filesystem if no disk)"
 
+# Boot the ISO on its own — no hard disk, RAM-backed filesystem (ephemeral).
 run-iso: iso
+	$(QEMU) -cdrom honeyos.iso -boot d \
+	        -display curses -no-reboot
+
+# Boot the ISO with disk.img attached, so the filesystem persists on the disk.
+run-iso-persist: iso
 	$(QEMU) -cdrom honeyos.iso -hda disk.img -boot d \
 	        -display curses -no-reboot
 

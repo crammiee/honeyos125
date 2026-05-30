@@ -15,7 +15,8 @@
 #define ATA_SR_DRQ  0x08
 #define ATA_SR_ERR  0x01
 
-void ata_read (uint32_t lba, uint8_t *buf);
-void ata_write(uint32_t lba, const uint8_t *buf);
+/* Return 0 on success, -1 on timeout/error (e.g. no drive attached). */
+int ata_read (uint32_t lba, uint8_t *buf);
+int ata_write(uint32_t lba, const uint8_t *buf);
 
 #endif /* ATA_H */
