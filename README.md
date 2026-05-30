@@ -155,7 +155,8 @@ cd <name>       change directory (.. to go up)
 cat <file>      print file contents
 write <file>    create/overwrite file (end input with '.')
 edit <file>     rewrite an existing file
-rm <name>       delete a file or directory
+rm <name>       delete a file or empty directory
+rm -r <name>    recursively delete a directory and all its contents
 fat             display the file allocation table (used/free blocks)
 shutdown        halt the OS (QEMU and VirtualBox; use VM power-off on other platforms)
 ```

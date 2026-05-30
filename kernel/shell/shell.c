@@ -51,7 +51,8 @@ static void cmd_help(int argc, char **argv) {
     vga_puts("  ls              - list current directory\n");
     vga_puts("  mkdir <name>    - create a directory\n");
     vga_puts("  cd <name>       - change directory (.. to go up)\n");
-    vga_puts("  rm <name>       - delete a file or directory\n");
+    vga_puts("  rm <name>       - delete a file or empty directory\n");
+    vga_puts("  rm -r <name>    - recursively delete a directory and its contents\n");
     vga_puts("  cat <file>      - print file contents\n");
     vga_puts("  write <file>    - create/overwrite file (end input with '.')\n");
     vga_puts("  edit <file>     - rewrite an existing file\n");
@@ -62,7 +63,51 @@ static void cmd_help(int argc, char **argv) {
 static void cmd_ls    (int argc, char **argv) { (void)argc; (void)argv; dir_list(); }
 static void cmd_mkdir (int argc, char **argv) { if (argc < 2) { vga_puts("Usage: mkdir <name>\n"); return; } dir_create(argv[1]); }
 static void cmd_cd    (int argc, char **argv) { if (argc < 2) { vga_puts("Usage: cd <name>\n");    return; } dir_change(argv[1]); }
-static void cmd_rm    (int argc, char **argv) { if (argc < 2) { vga_puts("Usage: rm <name>\n");    return; } file_delete(argv[1]); }
+static void shell_memset(void *dst, uint8_t val, int n) {
+    uint8_t *p = (uint8_t *)dst; while (n--) *p++ = val;
+}
+
+static void delete_dir_contents(uint16_t dir_sector) {
+    uint8_t buf[SECTOR_SIZE];
+    for (uint16_t sec = dir_sector; sec; sec = dir_next_sector(dir_sector, sec)) {
+        sector_read(sec, buf);
+        dir_entry_t *e = (dir_entry_t *)buf;
+        int modified = 0;
+        for (int i = 0; i < (int)DIR_ENTRIES_PER_SECTOR; i++) {
+            if (e[i].attr == ATTR_FREE) continue;
+            if (e[i].name[0] == '.') continue;
+            if (e[i].attr == ATTR_DIR) {
+                delete_dir_contents(block_to_sector(e[i].first_block));
+                fat_free_chain(e[i].first_block);
+            } else {
+                fat_free_chain(e[i].first_block);
+            }
+            shell_memset(&e[i], 0, sizeof(dir_entry_t));
+            modified = 1;
+        }
+        if (modified) sector_write(sec, buf);
+    }
+}
+
+static void cmd_rm(int argc, char **argv) {
+    if (argc < 2) { vga_puts("Usage: rm [-r] <name>\n"); return; }
+    int recursive = (argc >= 3 && argv[1][0] == '-' && argv[1][1] == 'r');
+    const char *name = recursive ? argv[2] : argv[1];
+
+    if (recursive) {
+        dir_entry_t *e = dir_find(name, cwd_sector);
+        if (!e) { vga_puts("rm: not found: "); vga_puts(name); vga_putchar('\n'); return; }
+        if (e->attr != ATTR_DIR) { file_delete(name); return; }
+        uint16_t blk = e->first_block;
+        shell_memset(e, 0, sizeof(dir_entry_t));
+        dir_flush();
+        delete_dir_contents(block_to_sector(blk));
+        fat_free_chain(blk);
+        kprintf("Deleted '%s' and all contents.\n", name);
+    } else {
+        file_delete(name);
+    }
+}
 static void cmd_cat   (int argc, char **argv) { if (argc < 2) { vga_puts("Usage: cat <file>\n");   return; } file_read(argv[1]); }
 static void cmd_write (int argc, char **argv) { if (argc < 2) { vga_puts("Usage: write <file>\n"); return; } file_write(argv[1]); }
 static void cmd_edit  (int argc, char **argv) { if (argc < 2) { vga_puts("Usage: edit <file>\n");  return; } file_edit(argv[1]); }
