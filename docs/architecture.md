@@ -6,9 +6,9 @@ the current tree, mapping each feature to the source that provides it.
 
 HoneyOS is a freestanding 32-bit x86 operating system that boots from its own
 MBR, runs entirely in ring 0 without an underlying OS or libc, and presents an
-interactive shell over a persistent FAT filesystem. It satisfies the CMSC 125
-Phase 2 requirements: a bootable, self-running OS with a welcome screen, an
-infinite task loop, and basic file/directory operations backed by a FAT using
+interactive shell with a FAT-based linked-allocation filesystem. It satisfies the
+CMSC 125 Phase 2 requirements: a bootable, self-running OS with a welcome screen,
+an infinite task loop, and basic file/directory operations backed by a FAT using
 linked allocation.
 
 ---
@@ -29,10 +29,14 @@ In order, it:
 
 1. **Sets up segments and stack** — zeroes `DS/ES/SS`, points `SP` at `0x7C00`,
    and saves the BIOS-provided boot drive number from `DL`.
-2. **Loads the kernel** via `INT 13h, AH=42h` (LBA Extended Read) using a Disk
-   Address Packet. This reads `KERNEL_SECTORS = 32` sectors (16 KB) starting at
-   LBA 1 into linear address `0x1000`. LBA extended read is used (rather than the
-   CHS `AH=02h` call) so it works against a `-hda` hard disk of any geometry.
+2. **Loads the kernel** — `KERNEL_SECTORS = 32` sectors (16 KB) from LBA 1 into
+   linear address `0x1000`. The read method is chosen by the BIOS boot-drive
+   number (bit 7): a **hard disk** (`>= 0x80`, the `-hda` case) uses `INT 13h
+   AH=42h` (LBA Extended Read) via a Disk Address Packet, which works for any
+   geometry; a **floppy or El Torito CD** (`< 0x80`) uses classic CHS reads
+   (`AH=02h`) one sector at a time with 1.44 MB floppy geometry (18 sectors ×
+   2 heads). The CD path matters because El Torito floppy emulation does not
+   reliably support extended reads.
 3. **Enables the A20 line** through the 8042 keyboard controller (`out 0x64,
    0xD1` then `out 0x60, 0xDF`), unlocking memory above 1 MB.
 4. **Installs a flat GDT** — a null descriptor plus two overlapping 4 GB ring-0
@@ -61,7 +65,7 @@ void kernel_main(void) {
     vga_init();           // clear screen, set default color
     vga_print_welcome();  // welcome banner
     keyboard_init();      // PS/2 driver
-    fs_init();            // mount or format the disk
+    fs_init();            // mount or format the disk (ATA or RAM fallback)
     while (1) shell_run();// infinite REPL loop
 }
 ```
@@ -125,7 +129,11 @@ survives reboots.
 - **`ata_write(lba, buf)`** — same setup, issue `WRITE SECTORS` (`0x30`), push 256
   words, then issue `FLUSH CACHE` (`0xE7`) so the write is committed to the image.
 
-The filesystem's `sector_read`/`sector_write` are direct pass-throughs to these.
+Every busy/ready wait is bounded by a timeout (`ATA_TIMEOUT` spins) and the calls
+return `0`/`-1`. An absent drive floats the status register to `0xFF` — `BSY` would
+otherwise stay set forever — so the timeout is what lets the kernel detect "no
+disk" instead of hanging. The filesystem's `sector_read`/`sector_write` pass
+through to these when a disk is present, and to the RAM disk otherwise.
 
 ---
 
@@ -133,8 +141,8 @@ The filesystem's `sector_read`/`sector_write` are direct pass-throughs to these.
 
 A FAT16-style filesystem using **linked allocation**, the core deliverable of the
 project. Split across three files: `fat.c` (geometry, FAT chains, directory
-traversal, mount/format), `dir.c` (directory commands), and `file.c` (file
-commands).
+traversal, mount/format, RAM fallback), `dir.c` (directory commands), and
+`file.c` (file commands).
 
 ### 6.1 On-disk layout
 
@@ -154,14 +162,27 @@ commands).
 The superblock (`superblock_t`, padded to 512 bytes) stores the magic number
 `0x484F4E45` ("HONE") plus the region offsets. `fs_init()`:
 
-- Reads sector 33. If the magic is absent the disk is **formatted** (`fs_format`):
-  write a fresh superblock, zero the FAT, and zero the root directory region.
+- Probes the ATA drive with a single read of the superblock sector.
+- If the read **times out** (no drive attached), it switches to the RAM disk and
+  formats a fresh, ephemeral filesystem there (see RAM fallback below).
+- Otherwise, if the magic is absent the disk is **formatted** (`fs_format`): write
+  a fresh superblock, zero the FAT, and zero the root directory region.
 - If the magic is present, the FAT is **loaded** from disk into the in-memory
   cache (`fat_load`) and the existing filesystem is mounted.
 - Either way, the current working directory is reset to the root.
 
 This format-on-first-boot / mount-on-subsequent-boot behavior is what gives
 HoneyOS persistence across reboots.
+
+**RAM fallback.** `fs_init` first probes the ATA drive with a single read. If that
+times out — no hard disk attached, e.g. when booted from a read-only CD/ISO — it
+sets RAM mode, formats a fresh filesystem into an in-memory `ram_disk[]` array
+(512 KB, living in BSS so it costs nothing in the kernel image), and prints
+`no disk detected - using RAM (changes are not saved)`. In RAM mode
+`sector_read`/`sector_write` hit the array instead of ATA, and `fat_alloc` caps
+allocation at the RAM disk's size. The shell is then fully usable — `mkdir`,
+`write`, `cat`, `ls`, etc. all work — the contents just vanish on reboot. This is
+what makes the standalone bootable ISO work with no attached disk.
 
 ### 6.3 FAT chain operations
 
@@ -171,7 +192,8 @@ on every change:
 - **`fat_next(block)`** — follow the chain (`0xFFFF` = end of chain).
 - **`fat_set(block, val)`** — update an entry and flush the affected FAT sector.
 - **`fat_alloc()`** — linear scan for the first free (`0x0000`) data block, marks
-  it end-of-chain, and returns it (or `FAT_EOC` when the disk is full).
+  it end-of-chain, and returns it (or `FAT_EOC` when the disk is full). The scan
+  is capped at the RAM disk's size when running RAM-backed.
 - **`fat_free_chain(first)`** — walk and free an entire chain (file data or a
   directory's blocks).
 
@@ -268,6 +290,20 @@ libc, runtime, or ELF header in the final image:
   kernel starting at sector 1, producing `disk.img`.
 - `make run` boots it under `qemu-system-i386 -hda disk.img -display curses`;
   `make run-debug` adds serial output and a CPU/interrupt trace to `qemu.log`.
+- `make iso` wraps the floppy-sized `disk.img` in a bootable ISO
+  (`honeyos.iso`) via `xorriso` using floppy-emulation El Torito, so the custom
+  MBR boots straight from a CD/DVD in any VM. The ISO is standalone: `make
+  run-iso` boots it with no hard disk, so it runs the RAM-backed filesystem
+  (ephemeral). `make run-iso-persist` additionally attaches `disk.img`, so the
+  filesystem lives and persists on the disk exactly as in the `-hda` boot.
+
+### Boot targets at a glance
+
+| Command | CD/DVD | Hard disk | Filesystem | Persists? |
+|---------|--------|-----------|------------|-----------|
+| `make run` | — | `disk.img` | ATA disk | yes |
+| `make run-iso` | `honeyos.iso` | — | RAM fallback | no |
+| `make run-iso-persist` | `honeyos.iso` | `disk.img` | ATA disk | yes |
 
 ---
 

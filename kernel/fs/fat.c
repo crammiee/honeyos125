@@ -4,16 +4,18 @@
  * Implements a simple FAT using linked allocation. Each FAT entry is a
  * uint16_t: 0x0000 = free, 0xFFFF = end of chain, else = next block.
  *
- * The entire disk is represented as an in-memory byte array (disk_image[]).
- * sector_read/write copy data in and out of this array so the rest of the
- * kernel never has to deal with a real disk driver at this stage.
+ * Storage is normally the ATA hard disk (sector_read/write wrap the driver).
+ * When no drive responds at boot (e.g. booted from a read-only CD/ISO with no
+ * hard disk attached), the filesystem transparently falls back to an in-memory
+ * RAM disk so the shell stays fully usable — changes are simply not persisted.
  *
  * Disk layout:
  *   Sector  0        : MBR (written by boot.asm, not touched here)
- *   Sector  1        : Superblock
- *   Sectors 2–17     : FAT table  (4 096 entries × 2 bytes)
- *   Sectors 18–49    : Root directory region (512 dir_entry_t slots)
- *   Sectors 50+      : Data blocks
+ *   Sectors 1–32     : Kernel binary
+ *   Sector  33       : Superblock
+ *   Sectors 34–49    : FAT table  (4 096 entries × 2 bytes)
+ *   Sectors 50–81    : Root directory region (512 dir_entry_t slots)
+ *   Sectors 82+      : Data blocks
  */
 
 #include "fat.h"
@@ -32,6 +34,15 @@ static uint16_t dir_buf_sector;
 
 uint16_t cwd_sector = ROOT_DIR_SECTOR;
 char     cwd_path[CWD_PATH_MAX] = "root";   /* shown in the shell prompt */
+
+/* RAM-disk fallback. When no ATA drive responds at boot (e.g. booted from a
+   read-only CD/ISO with no hard disk), the filesystem lives entirely in this
+   in-memory array instead. Sized to cover the metadata regions plus a useful
+   pool of data blocks; changes are NOT persisted across reboots. Lives in BSS,
+   so it costs nothing in the on-disk kernel image. */
+#define RAMDISK_SECTORS 1024                       /* 512 KB RAM disk */
+static uint8_t ram_disk[RAMDISK_SECTORS * SECTOR_SIZE];
+static int     ram_mode = 0;                       /* 0 = ATA disk, 1 = RAM */
 
 /* -----------------------------------------------------------------------
  * Internal helpers
@@ -58,10 +69,21 @@ static int name_matches(const char *field, int flen, const char *plain) {
  * --------------------------------------------------------------------- */
 
 void sector_read(uint16_t lba, uint8_t *buf) {
+    if (ram_mode) {
+        for (int i = 0; i < SECTOR_SIZE; i++)
+            buf[i] = (lba < RAMDISK_SECTORS) ? ram_disk[lba * SECTOR_SIZE + i] : 0;
+        return;
+    }
     ata_read((uint32_t)lba, buf);
 }
 
 void sector_write(uint16_t lba, const uint8_t *buf) {
+    if (ram_mode) {
+        if (lba < RAMDISK_SECTORS)
+            for (int i = 0; i < SECTOR_SIZE; i++)
+                ram_disk[lba * SECTOR_SIZE + i] = buf[i];
+        return;
+    }
     ata_write((uint32_t)lba, buf);
 }
 
@@ -76,7 +98,7 @@ uint16_t fat_next(uint16_t block) {
 void fat_set(uint16_t block, uint16_t val) {
     if (block >= FAT_MAX_ENTRIES) return;
     fat_table[block] = val;
-    /* Write the affected FAT sector back to disk_image */
+    /* Write the affected FAT sector back to disk */
     uint16_t eps = SECTOR_SIZE / sizeof(uint16_t);   /* entries per sector */
     uint16_t sec = block / eps;
     sector_write(FAT_START_SECTOR + sec,
@@ -84,7 +106,10 @@ void fat_set(uint16_t block, uint16_t val) {
 }
 
 uint16_t fat_alloc(void) {
-    for (uint16_t i = DATA_START_SECTOR; i < DISK_SECTORS; i++) {
+    /* The RAM disk is smaller than the nominal on-disk geometry, so cap the
+       search at its size when running RAM-backed. */
+    uint16_t limit = ram_mode ? RAMDISK_SECTORS : DISK_SECTORS;
+    for (uint16_t i = DATA_START_SECTOR; i < limit; i++) {
         if (fat_table[i] == FAT_FREE) { fat_set(i, FAT_EOC); return i; }
     }
     return FAT_EOC;   /* disk full */
@@ -182,7 +207,7 @@ int dir_is_empty(uint16_t dir_first) {
 }
 
 /* -----------------------------------------------------------------------
- * fs_init — mount or format the in-memory disk
+ * fs_init — mount or format the disk (ATA or RAM fallback)
  * --------------------------------------------------------------------- */
 
 static void fat_load(void) {
@@ -213,19 +238,30 @@ static void fs_format(void) {
     for (int s = 0; s < ROOT_DIR_SECTORS; s++)
         sector_write(ROOT_DIR_SECTOR + s, empty);
 
-    kprintf("HoneyOS FS: formatted fresh disk.\n");
+    /* In RAM mode fs_init prints its own message; only announce a real format. */
+    if (!ram_mode)
+        kprintf("HoneyOS FS: formatted fresh disk.\n");
 }
 
 void fs_init(void) {
     uint8_t buf[SECTOR_SIZE];
-    sector_read(SUPERBLOCK_SECTOR, buf);
-    superblock_t *sb = (superblock_t *)buf;
 
-    if (sb->magic != FS_MAGIC) {
-        fs_format();
-    } else {
+    /* Probe the ATA drive directly. A timeout (-1) means no disk is attached
+       — typically when booted from a read-only CD/ISO — so switch to the RAM
+       disk and format a fresh, ephemeral filesystem there. */
+    if (ata_read(SUPERBLOCK_SECTOR, buf) != 0) {
+        ram_mode = 1;
+        fs_format();   /* writes into ram_disk now that ram_mode is set */
         fat_load();
-        kprintf("HoneyOS FS: mounted existing disk.\n");
+        kprintf("HoneyOS FS: no disk detected - using RAM (changes are not saved).\n");
+    } else {
+        superblock_t *sb = (superblock_t *)buf;
+        if (sb->magic != FS_MAGIC) {
+            fs_format();
+        } else {
+            fat_load();
+            kprintf("HoneyOS FS: mounted existing disk.\n");
+        }
     }
     cwd_sector = ROOT_DIR_SECTOR;
     cwd_path[0] = 'r'; cwd_path[1] = 'o';

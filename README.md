@@ -5,7 +5,7 @@ A minimal x86 hobby OS built from scratch. Boots via a custom MBR, runs a freest
 ## Features
 
 ### Bootloader
-A hand-written 512-byte MBR (`boot/boot.asm`). On boot the BIOS loads it at `0x7C00`. It reads the kernel from disk using INT 13h LBA extended read, enables the A20 line via the keyboard controller, installs a flat GDT (two 4 GB ring-0 segments), sets `CR0.PE`, and far-jumps into 32-bit protected mode before handing off to the kernel at `0x1000`.
+A hand-written 512-byte MBR (`boot/boot.asm`). On boot the BIOS loads it at `0x7C00`. It reads the kernel from disk — using INT 13h AH=42h (LBA extended read) when booted from a hard disk, or classic CHS reads (AH=02h) when booted from a floppy or an El Torito CD, chosen by the BIOS boot-drive number — then enables the A20 line via the keyboard controller, installs a flat GDT (two 4 GB ring-0 segments), sets `CR0.PE`, and far-jumps into 32-bit protected mode before handing off to the kernel at `0x1000`.
 
 ### Kernel
 Entered from `kernel/kernel_entry.asm`, which sets up the stack at `0x90000`, zeroes BSS, then calls `kernel_main()`. The kernel is compiled as a freestanding 32-bit ELF and linked to a flat binary by `linker.ld` — no libc, no runtime, no ELF header in the final image.
@@ -28,10 +28,10 @@ A FAT16-style linked-allocation filesystem (`kernel/fs/`). The 2880-sector (1.44
 | 50–81 | Root directory | 32 sectors, fixed size |
 | 82+ | Data blocks | files and sub-directories |
 
-Each FAT entry is a `uint16_t`: `0x0000` = free, `0xFFFF` = end of chain, otherwise the index of the next block. File and directory metadata is stored as 32-byte 8.3-format entries (`dir_entry_t`). The root directory is a fixed contiguous region; every sub-directory is its own FAT chain (and grows by appending a block when its current sectors fill up). Sub-directories store a `..` entry in slot 0 pointing back at the parent so `cd ..` can walk home. On first boot the disk is formatted; subsequent boots detect the magic number `0x484F4E45` ("HONE") in the superblock and mount the existing filesystem.
+Each FAT entry is a `uint16_t`: `0x0000` = free, `0xFFFF` = end of chain, otherwise the index of the next block. File and directory metadata is stored as 32-byte 8.3-format entries (`dir_entry_t`). The root directory is a fixed contiguous region; every sub-directory is its own FAT chain (and grows by appending a block when its current sectors fill up). Sub-directories store a `..` entry in slot 0 pointing back at the parent so `cd ..` can walk home. On first boot the disk is formatted; subsequent boots detect the magic number `0x484F4E45` ("HONE") in the superblock and mount the existing filesystem. If no ATA drive responds at all (e.g. when booted from a read-only CD/ISO with no hard disk), `fs_init` formats and runs an ephemeral in-RAM filesystem instead, so the shell is still fully usable — changes just aren't saved.
 
 ### ATA PIO Disk I/O
-Sector reads and writes go directly to the emulated hard disk via ATA PIO (`kernel/io/ata.c`). The driver polls the primary bus status register (`0x1F7`), programs a LBA28 address, issues the read (`0x20`) or write (`0x30`) command, then transfers 256 16-bit words through the data register (`0x1F0`). Writes are followed by a cache flush (`0xE7`). This is what makes the filesystem persistent — data survives reboots because it is written into `disk.img` on the host.
+Sector reads and writes go directly to the emulated hard disk via ATA PIO (`kernel/io/ata.c`). The driver polls the primary bus status register (`0x1F7`), programs a LBA28 address, issues the read (`0x20`) or write (`0x30`) command, then transfers 256 16-bit words through the data register (`0x1F0`). Writes are followed by a cache flush (`0xE7`). This is what makes the filesystem persistent — data survives reboots because it is written into `disk.img` on the host. Every wait is bounded by a timeout so the kernel never hangs when no drive is attached (an absent drive floats the status register to `0xFF`, which would otherwise keep `BSY` set forever); on timeout the call returns an error and the filesystem falls back to a RAM disk.
 
 ### Shell
 A REPL loop (`kernel/shell/shell.c`) that prints a prompt, reads a line character by character, tokenises on spaces, and dispatches to a static command table. Supports `ls`, `mkdir`, `cd`, `cat`, `write`, `edit`, `rm`, `help`, and `shutdown`. `shutdown` writes `0x2000` to port `0x604` (QEMU ACPI poweroff) and halts with `cli; hlt`.
@@ -109,6 +109,7 @@ WSL2 is the recommended path — it gives you a full Linux environment where all
 | `qemu-system-i386` | Run the disk image |
 | `make` | Build orchestration |
 | `dd` | Assemble the 1.44 MB disk image (standard on Linux) |
+| `xorriso` | Build the bootable ISO (`make iso`) — optional |
 
 See [Getting Started](#getting-started) for distro-specific install commands.
 
@@ -128,11 +129,37 @@ make run-debug
 # or
 ./run.sh --debug
 
+# Build a bootable ISO and boot it standalone (RAM filesystem, ephemeral)
+make run-iso
+# boot the ISO with disk.img attached, so the filesystem persists:
+make run-iso-persist
+# build the ISO only:
+make iso
+
 # Clean build artifacts
 make clean
 ```
 
 > QEMU opens in curses mode inside the terminal. Press `Alt+2` to access the QEMU monitor, `Ctrl+A X` to quit.
+
+### Running in a VM (VirtualBox / VMware / QEMU)
+
+Two artifacts can be booted:
+
+- **`disk.img`** — the raw hard-disk image. Attach it as a **hard disk** and boot
+  from it. The filesystem is persistent (changes survive reboots). In QEMU:
+  `make run`. For VirtualBox/VMware, convert it first, e.g.
+  `qemu-img convert -O vdi disk.img honeyos.vdi` (or `-O vmdk … honeyos.vmdk`),
+  and attach the result as the hard disk.
+- **`honeyos.iso`** — a bootable CD/DVD image (`make iso`), the "just insert the
+  disc and play" option for any VM. It is a floppy-emulation El Torito image, so
+  the custom MBR boots straight from the CD with **no hard disk required**: when
+  none is found, HoneyOS runs an in-RAM filesystem and drops you at a working
+  shell (changes are not saved across reboots). `make run-iso` boots it this way.
+  To keep your files, also attach `disk.img` as a hard disk — the filesystem then
+  lives (and persists) there instead; `make run-iso-persist` does this in QEMU,
+  and in VirtualBox/VMware you attach the ISO as CD/DVD and `disk.img` (converted)
+  as the hard disk.
 
 ## Shell Commands
 

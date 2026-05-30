@@ -1,14 +1,17 @@
 ; HoneyOS MBR Bootloader
 ; Loaded by BIOS at 0x7C00 in real mode (16-bit).
-; Reads the kernel from disk into linear address 0x1000, enables the A20
-; line, sets up a minimal GDT, switches to 32-bit protected mode, and
-; jumps to the kernel entry point.
+; Reads the kernel from disk into linear address 0x1000 (LBA extended read for
+; hard disks, CHS read for floppies / El Torito CDs), enables the A20 line, sets
+; up a minimal GDT, switches to 32-bit protected mode, and jumps to the kernel
+; entry point.
 
 [BITS 16]
 [ORG 0x7C00]
 
 KERNEL_LOAD_SEG  equ 0x0100   ; segment → linear address 0x1000
 KERNEL_SECTORS   equ 32       ; sectors to load (32 × 512 = 16 KB)
+FLOPPY_SPT       equ 18       ; CHS geometry: sectors per track (1.44 MB floppy)
+FLOPPY_HEADS     equ 2        ; CHS geometry: heads (1.44 MB floppy)
 
 start:
     cli
@@ -25,17 +28,69 @@ start:
     call print_string
 
     ; ------------------------------------------------------------------
-    ; Load the kernel using INT 0x13 AH=42h (LBA Extended Read).
-    ; Works for any drive geometry — required for HDA (-hda in QEMU).
+    ; Load the kernel. The method depends on the boot device:
+    ;   • Hard disk (-hda): BIOS drive >= 0x80. Use INT 13h AH=42h (LBA
+    ;     Extended Read) — works for any hard-disk geometry.
+    ;   • Floppy / El Torito CD floppy-emulation: BIOS drive < 0x80. Extended
+    ;     read is unreliable there (the CD case silently returns wrong data),
+    ;     so use classic CHS reads (AH=02h) with 1.44 MB floppy geometry.
+    ; Bit 7 of the BIOS drive number cleanly distinguishes the two.
     ; ------------------------------------------------------------------
     mov ax, KERNEL_LOAD_SEG
     mov es, ax              ; destination segment (linear 0x1000)
 
+    mov dl, [boot_drive]
+    test dl, 0x80
+    jz  .load_chs          ; floppy / emulated floppy → CHS
+
+    ; ---- LBA extended read (hard disk) ----
     mov si, dap
     mov ah, 0x42
-    mov dl, [boot_drive]
     int 0x13
     jc  disk_error
+    jmp .load_done
+
+    ; ---- CHS read: LBA 1..KERNEL_SECTORS, one sector at a time ----
+.load_chs:
+    xor di, di             ; di = sector index 0..KERNEL_SECTORS-1
+.chs_loop:
+    cmp di, KERNEL_SECTORS
+    jae .load_done
+
+    ; Buffer offset first (this MUL clobbers DX, so it must run before the
+    ; CHS values are placed in CX/DH below). ES:BX = KERNEL_LOAD_SEG:(di*512).
+    mov ax, di
+    mov bx, 512
+    mul bx                 ; DX:AX = di*512 (DX = 0 for di < 128)
+    mov bx, ax
+    mov ax, KERNEL_LOAD_SEG
+    mov es, ax
+
+    ; Convert LBA (= di + 1) to CHS for 1.44 MB floppy geometry. Divisors go
+    ; in CX/SI because BX now holds the buffer offset.
+    mov ax, di
+    inc ax                 ; AX = LBA (kernel starts at LBA 1)
+    xor dx, dx
+    mov cx, FLOPPY_SPT
+    div cx                 ; AX = track = LBA/SPT, DX = LBA%SPT
+    mov cl, dl
+    inc cl                 ; CL = sector number (1-based)
+    xor dx, dx
+    mov si, FLOPPY_HEADS
+    div si                 ; AX = cylinder, DX = head
+    mov ch, al             ; CH = cylinder (low 8 bits; fits our range)
+    mov dh, dl             ; DH = head
+
+    mov ah, 0x02
+    mov al, 1              ; read one sector
+    mov dl, [boot_drive]
+    push di
+    int 0x13
+    pop di
+    jc  disk_error
+
+    inc di
+    jmp .chs_loop
 
 .load_done:
 

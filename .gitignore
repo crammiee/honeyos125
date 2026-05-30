@@ -1,5 +1,6 @@
 build/
 disk.img
+honeyos.iso
 *.bin
 *.o
 qemu.log
