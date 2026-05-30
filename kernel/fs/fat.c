@@ -13,9 +13,9 @@
  *   Sector  0        : MBR (written by boot.asm, not touched here)
  *   Sectors 1–32     : Kernel binary
  *   Sector  33       : Superblock
- *   Sectors 34–49    : FAT table  (4 096 entries × 2 bytes)
- *   Sectors 50–81    : Root directory region (512 dir_entry_t slots)
- *   Sectors 82+      : Data blocks
+ *   Sectors 34–65    : FAT table  (8 192 entries × 2 bytes)
+ *   Sectors 66–97    : Root directory region (512 dir_entry_t slots)
+ *   Sectors 98+      : Data blocks
  */
 
 #include "fat.h"

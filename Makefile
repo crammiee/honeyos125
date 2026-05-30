@@ -33,7 +33,7 @@ ALL_OBJS := $(ASM_OBJS) $(C_OBJS)
 all: disk.img
 
 disk.img: $(BUILD)/boot.bin $(BUILD)/kernel.bin
-	dd if=/dev/zero of=$@ bs=512 count=2880 2>/dev/null
+	dd if=/dev/zero of=$@ bs=512 count=8192 2>/dev/null
 	dd if=$(BUILD)/boot.bin of=$@ conv=notrunc 2>/dev/null
 	dd if=$(BUILD)/kernel.bin of=$@ bs=512 seek=1 conv=notrunc 2>/dev/null
 	@echo "[OK] disk.img ready"

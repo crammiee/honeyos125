@@ -17,16 +17,16 @@ Direct memory-mapped output to the 80×25 VGA text buffer at `0xB8000` (`kernel/
 Polling driver (`kernel/io/keyboard.c`) that reads scancodes from port `0x60` and translates them to ASCII using a US QWERTY scancode table. Handles key-up events and modifier keys (shift). Exposes a single `keyboard_getchar()` call that the shell reads character by character.
 
 ### FAT Filesystem
-A FAT16-style linked-allocation filesystem (`kernel/fs/`). The 2880-sector (1.44 MB) disk is laid out as:
+A FAT16-style linked-allocation filesystem (`kernel/fs/`). The 8192-sector (4 MB) disk is laid out as:
 
 | Sectors | Region | Notes |
 |---------|--------|-------|
 | 0 | MBR | written by `boot.asm` |
 | 1–32 | Kernel binary | 32 sectors = 16 KB, loaded by the bootloader |
 | 33 | Superblock | magic, geometry |
-| 34–49 | FAT table | 16 sectors → 4096 `uint16_t` entries |
-| 50–81 | Root directory | 32 sectors, fixed size |
-| 82+ | Data blocks | files and sub-directories |
+| 34–65 | FAT table | 32 sectors → 8192 `uint16_t` entries |
+| 66–97 | Root directory | 32 sectors, fixed size |
+| 98+ | Data blocks | files and sub-directories |
 
 Each FAT entry is a `uint16_t`: `0x0000` = free, `0xFFFF` = end of chain, otherwise the index of the next block. File and directory metadata is stored as 32-byte 8.3-format entries (`dir_entry_t`). The root directory is a fixed contiguous region; every sub-directory is its own FAT chain (and grows by appending a block when its current sectors fill up). Sub-directories store a `..` entry in slot 0 pointing back at the parent so `cd ..` can walk home. On first boot the disk is formatted; subsequent boots detect the magic number `0x484F4E45` ("HONE") in the superblock and mount the existing filesystem. If no ATA drive responds at all (e.g. when booted from a read-only CD/ISO with no hard disk), `fs_init` formats and runs an ephemeral in-RAM filesystem instead, so the shell is still fully usable — changes just aren't saved.
 
@@ -147,20 +147,17 @@ make clean
 
 Two artifacts can be booted:
 
-- **`disk.img`** — the raw hard-disk image. Attach it as a **hard disk** and boot
-  from it. The filesystem is persistent (changes survive reboots). In QEMU:
-  `make run`. For VirtualBox/VMware, convert it first, e.g.
+- **`honeyos.iso`** — the recommended option for most users (`make iso`). Attach
+  it as a CD/DVD drive and boot. In QEMU use `make run-iso`. In VirtualBox,
+  attach the ISO as a CD/DVD — VirtualBox auto-creates a virtual hard disk, the
+  ATA driver finds it, and the filesystem is **persistent** with no extra steps.
+  For QEMU without a separate disk image, the filesystem is ephemeral (RAM only);
+  use `make run-iso-persist` to also attach `disk.img` for persistence in QEMU.
+
+- **`disk.img`** — the raw hard-disk image for QEMU (`make run`). For
+  VirtualBox/VMware, convert it first:
   `qemu-img convert -O vdi disk.img honeyos.vdi` (or `-O vmdk … honeyos.vmdk`),
-  and attach the result as the hard disk.
-- **`honeyos.iso`** — a bootable CD/DVD image (`make iso`), the "just insert the
-  disc and play" option for any VM. It is a floppy-emulation El Torito image, so
-  the custom MBR boots straight from the CD with **no hard disk required**: when
-  none is found, HoneyOS runs an in-RAM filesystem and drops you at a working
-  shell (changes are not saved across reboots). `make run-iso` boots it this way.
-  To keep your files, also attach `disk.img` as a hard disk — the filesystem then
-  lives (and persists) there instead; `make run-iso-persist` does this in QEMU,
-  and in VirtualBox/VMware you attach the ISO as CD/DVD and `disk.img` (converted)
-  as the hard disk.
+  then attach as a hard disk. Not needed if you are using the ISO in VirtualBox.
 
 ## Shell Commands
 
