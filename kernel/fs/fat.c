@@ -23,8 +23,12 @@
 /* Cached copy of the FAT table */
 static uint16_t fat_table[FAT_MAX_ENTRIES];
 
-/* Single-sector directory buffer used by dir_find / dir_find_free */
-static uint8_t dir_buf[ROOT_DIR_SECTORS * SECTOR_SIZE];
+/* One-sector directory buffer plus the LBA it currently holds. dir_find /
+   dir_find_free load the relevant sector here and remember which one, so
+   dir_flush() can write back exactly that sector. A single sector is enough
+   because directories are now walked one sector at a time (see below). */
+static uint8_t  dir_buf[SECTOR_SIZE];
+static uint16_t dir_buf_sector;
 
 uint16_t cwd_sector = ROOT_DIR_SECTOR;
 
@@ -97,41 +101,83 @@ void fat_free_chain(uint16_t first) {
  * Directory helpers
  * --------------------------------------------------------------------- */
 
-static void dir_load(uint16_t dir_sec) {
-    for (int i = 0; i < ROOT_DIR_SECTORS; i++)
-        sector_read(dir_sec + i, dir_buf + i * SECTOR_SIZE);
+/* Walk a directory's sectors. The root directory is a fixed contiguous
+   region (ROOT_DIR_SECTORS sectors); every other directory is a FAT chain,
+   exactly like a file. Returns the sector after `cur`, or 0 when there are
+   no more. `first` is the directory's starting sector, used to tell the
+   root region apart from a chained sub-directory. */
+uint16_t dir_next_sector(uint16_t first, uint16_t cur) {
+    if (first == ROOT_DIR_SECTOR) {
+        if (cur + 1 < ROOT_DIR_SECTOR + ROOT_DIR_SECTORS) return cur + 1;
+        return 0;
+    }
+    uint16_t nxt = fat_next(cur);
+    return (nxt == FAT_EOC || nxt == FAT_FREE) ? 0 : nxt;
 }
 
-void dir_flush(uint16_t dir_sec) {
-    for (int i = 0; i < ROOT_DIR_SECTORS; i++)
-        sector_write(dir_sec + i, dir_buf + i * SECTOR_SIZE);
+/* Write the currently buffered directory sector back to disk. */
+void dir_flush(void) {
+    sector_write(dir_buf_sector, dir_buf);
 }
 
+/* Search a directory (given by its first sector) for an entry matching
+   `name`. Each sector is loaded into dir_buf one at a time; the returned
+   pointer is valid only until the next dir_find / dir_find_free call. */
 dir_entry_t *dir_find(const char *name, uint16_t dir_sec) {
-    dir_load(dir_sec);
-    int total = ROOT_DIR_SECTORS * DIR_ENTRIES_PER_SECTOR;
-    dir_entry_t *e = (dir_entry_t *)dir_buf;
-    for (int i = 0; i < total; i++) {
-        if (e[i].attr == ATTR_FREE) continue;
-        if (!name_matches(e[i].name, 8, name)) continue;
-        /* Check extension if the name contains a dot */
-        const char *dot = name;
-        while (*dot && *dot != '.') dot++;
-        if (*dot == '.') {
-            if (!name_matches(e[i].ext, 3, dot + 1)) continue;
+    for (uint16_t sec = dir_sec; sec; sec = dir_next_sector(dir_sec, sec)) {
+        sector_read(sec, dir_buf);
+        dir_buf_sector = sec;
+        dir_entry_t *e = (dir_entry_t *)dir_buf;
+        for (int i = 0; i < (int)DIR_ENTRIES_PER_SECTOR; i++) {
+            if (e[i].attr == ATTR_FREE) continue;
+            if (!name_matches(e[i].name, 8, name)) continue;
+            /* Check extension if the name contains a dot */
+            const char *dot = name;
+            while (*dot && *dot != '.') dot++;
+            if (*dot == '.' && !name_matches(e[i].ext, 3, dot + 1)) continue;
+            return &e[i];
         }
-        return &e[i];
     }
     return NULL;
 }
 
+/* Find a free entry slot in a directory. If the directory is a chained
+   sub-directory and every existing sector is full, grow it by appending a
+   fresh block to its FAT chain. The root region is fixed, so it returns
+   NULL when full. */
 dir_entry_t *dir_find_free(uint16_t dir_sec) {
-    dir_load(dir_sec);
-    int total = ROOT_DIR_SECTORS * DIR_ENTRIES_PER_SECTOR;
-    dir_entry_t *e = (dir_entry_t *)dir_buf;
-    for (int i = 0; i < total; i++)
-        if (e[i].attr == ATTR_FREE) return &e[i];
-    return NULL;
+    uint16_t last = dir_sec;
+    for (uint16_t sec = dir_sec; sec; sec = dir_next_sector(dir_sec, sec)) {
+        sector_read(sec, dir_buf);
+        dir_buf_sector = sec;
+        dir_entry_t *e = (dir_entry_t *)dir_buf;
+        for (int i = 0; i < (int)DIR_ENTRIES_PER_SECTOR; i++)
+            if (e[i].attr == ATTR_FREE) return &e[i];
+        last = sec;
+    }
+    if (dir_sec == ROOT_DIR_SECTOR) return NULL;   /* fixed-size root */
+    uint16_t blk = fat_alloc();
+    if (blk == FAT_EOC) return NULL;               /* disk full */
+    fat_set(last, blk);                            /* append to the chain */
+    mem_set(dir_buf, 0, SECTOR_SIZE);
+    sector_write(blk, dir_buf);
+    dir_buf_sector = blk;
+    return (dir_entry_t *)dir_buf;                 /* entry 0 is now free */
+}
+
+/* A directory counts as empty when it holds no entries other than ".." . */
+int dir_is_empty(uint16_t dir_first) {
+    uint8_t buf[SECTOR_SIZE];
+    for (uint16_t sec = dir_first; sec; sec = dir_next_sector(dir_first, sec)) {
+        sector_read(sec, buf);
+        dir_entry_t *e = (dir_entry_t *)buf;
+        for (int i = 0; i < (int)DIR_ENTRIES_PER_SECTOR; i++) {
+            if (e[i].attr == ATTR_FREE) continue;
+            if (e[i].name[0] == '.') continue;     /* skip "." / ".." */
+            return 0;
+        }
+    }
+    return 1;
 }
 
 /* -----------------------------------------------------------------------
