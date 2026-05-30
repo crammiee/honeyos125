@@ -11,13 +11,24 @@ A hand-written 512-byte MBR (`boot/boot.asm`). On boot the BIOS loads it at `0x7
 Entered from `kernel/kernel_entry.asm`, which sets up the stack at `0x90000`, zeroes BSS, then calls `kernel_main()`. The kernel is compiled as a freestanding 32-bit ELF and linked to a flat binary by `linker.ld` — no libc, no runtime, no ELF header in the final image.
 
 ### VGA Display
-Direct memory-mapped output to the VGA text buffer at `0xB8000` (`kernel/screen/vga.c`). Each character is a two-byte cell (ASCII + color attribute). Supports scrolling, backspace, and color changes. Used by the shell, filesystem, and kernel messages.
+Direct memory-mapped output to the 80×25 VGA text buffer at `0xB8000` (`kernel/screen/vga.c`). Each character is a two-byte cell (ASCII + color attribute). Supports scrolling, backspace, newline, color changes, and hardware-cursor updates via the CRT controller (ports `0x3D4`/`0x3D5`). It also ships a freestanding `kprintf()` (handling `%s`, `%d`, `%u`, `%x`, `%c`, `%%` by pulling cdecl varargs off the stack) and a colored welcome banner. Used by the shell, filesystem, and kernel messages.
 
 ### PS/2 Keyboard
 Polling driver (`kernel/io/keyboard.c`) that reads scancodes from port `0x60` and translates them to ASCII using a US QWERTY scancode table. Handles key-up events and modifier keys (shift). Exposes a single `keyboard_getchar()` call that the shell reads character by character.
 
 ### FAT Filesystem
-A FAT16-style linked-allocation filesystem (`kernel/fs/`). The disk is divided into a superblock, a FAT table (16 sectors), a root directory region (32 sectors), and data blocks. Each FAT entry is a `uint16_t`: `0x0000` = free, `0xFFFF` = end of chain, otherwise the index of the next block. File and directory metadata is stored as 32-byte 8.3-format entries. On first boot the disk is formatted; subsequent boots detect the magic number `0x484F4E45` ("HONE") in the superblock and mount the existing filesystem.
+A FAT16-style linked-allocation filesystem (`kernel/fs/`). The 2880-sector (1.44 MB) disk is laid out as:
+
+| Sectors | Region | Notes |
+|---------|--------|-------|
+| 0 | MBR | written by `boot.asm` |
+| 1–32 | Kernel binary | 32 sectors = 16 KB, loaded by the bootloader |
+| 33 | Superblock | magic, geometry |
+| 34–49 | FAT table | 16 sectors → 4096 `uint16_t` entries |
+| 50–81 | Root directory | 32 sectors, fixed size |
+| 82+ | Data blocks | files and sub-directories |
+
+Each FAT entry is a `uint16_t`: `0x0000` = free, `0xFFFF` = end of chain, otherwise the index of the next block. File and directory metadata is stored as 32-byte 8.3-format entries (`dir_entry_t`). The root directory is a fixed contiguous region; every sub-directory is its own FAT chain (and grows by appending a block when its current sectors fill up). Sub-directories store a `..` entry in slot 0 pointing back at the parent so `cd ..` can walk home. On first boot the disk is formatted; subsequent boots detect the magic number `0x484F4E45` ("HONE") in the superblock and mount the existing filesystem.
 
 ### ATA PIO Disk I/O
 Sector reads and writes go directly to the emulated hard disk via ATA PIO (`kernel/io/ata.c`). The driver polls the primary bus status register (`0x1F7`), programs a LBA28 address, issues the read (`0x20`) or write (`0x30`) command, then transfers 256 16-bit words through the data register (`0x1F0`). Writes are followed by a cache flush (`0xE7`). This is what makes the filesystem persistent — data survives reboots because it is written into `disk.img` on the host.
@@ -97,7 +108,7 @@ WSL2 is the recommended path — it gives you a full Linux environment where all
 | `ld` (binutils) | Link flat 32-bit binary |
 | `qemu-system-i386` | Run the disk image |
 | `make` | Build orchestration |
-| `dd` | Assemble the floppy image (standard on Linux) |
+| `dd` | Assemble the 1.44 MB disk image (standard on Linux) |
 
 See [Getting Started](#getting-started) for distro-specific install commands.
 
