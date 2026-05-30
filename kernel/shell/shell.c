@@ -55,6 +55,7 @@ static void cmd_help(int argc, char **argv) {
     vga_puts("  cat <file>      - print file contents\n");
     vga_puts("  write <file>    - create/overwrite file (end input with '.')\n");
     vga_puts("  edit <file>     - rewrite an existing file\n");
+    vga_puts("  fat             - display file allocation table\n");
     vga_puts("  shutdown        - halt the OS\n");
 }
 
@@ -65,6 +66,81 @@ static void cmd_rm    (int argc, char **argv) { if (argc < 2) { vga_puts("Usage:
 static void cmd_cat   (int argc, char **argv) { if (argc < 2) { vga_puts("Usage: cat <file>\n");   return; } file_read(argv[1]); }
 static void cmd_write (int argc, char **argv) { if (argc < 2) { vga_puts("Usage: write <file>\n"); return; } file_write(argv[1]); }
 static void cmd_edit  (int argc, char **argv) { if (argc < 2) { vga_puts("Usage: edit <file>\n");  return; } file_edit(argv[1]); }
+
+/* Recursively scan a directory, marking block owners. */
+static void scan_dir(uint16_t dir_sector, char owners[TOTAL_BLOCKS][13]) {
+    uint8_t buf[SECTOR_SIZE];
+    for (uint16_t sec = dir_sector; sec;
+         sec = dir_next_sector(dir_sector, sec)) {
+        sector_read(sec, buf);
+        dir_entry_t *e = (dir_entry_t *)buf;
+        for (int i = 0; i < (int)DIR_ENTRIES_PER_SECTOR; i++) {
+            if (e[i].attr != ATTR_FILE && e[i].attr != ATTR_DIR) continue;
+            if (e[i].name[0] == '.') continue;
+            char name[13]; int n = 0;
+            for (int k = 0; k < 8 && e[i].name[k] != ' '; k++) name[n++] = e[i].name[k];
+            if (e[i].attr == ATTR_FILE && e[i].ext[0] != ' ') {
+                name[n++] = '.';
+                for (int k = 0; k < 3 && e[i].ext[k] != ' '; k++) name[n++] = e[i].ext[k];
+            }
+            name[n] = '\0';
+            uint16_t blk = e[i].first_block;
+            while (blk != FAT_EOC && blk != FAT_FREE && blk < TOTAL_BLOCKS) {
+                for (int k = 0; k <= n; k++) owners[blk][k] = name[k];
+                blk = fat_next(blk);
+            }
+            if (e[i].attr == ATTR_DIR)
+                scan_dir(block_to_sector(e[i].first_block), owners);
+        }
+    }
+}
+
+static void build_owner_map(char owners[TOTAL_BLOCKS][13]) {
+    for (int i = 0; i < TOTAL_BLOCKS; i++) owners[i][0] = '\0';
+    scan_dir(ROOT_DIR_SECTOR, owners);
+}
+
+static void print_fat_row(uint16_t block, const char *owner) {
+    if (block < 10) vga_puts("    "); else vga_puts("   ");
+    kprintf("%u", (uint32_t)block);
+    vga_puts("  ");
+    uint16_t entry = fat_next(block);
+    if (block == 0)              vga_puts("[SYS   ]");
+    else if (entry == FAT_FREE)  vga_puts("[FREE  ]");
+    else if (entry == FAT_EOC)   vga_puts("[END   ]");
+    else {
+        vga_puts("[->  ");
+        kprintf("%u", (uint32_t)entry);
+        if (entry < 10) vga_puts("  ]"); else vga_puts(" ]");
+    }
+    if (owner && owner[0]) { vga_puts("  "); vga_puts(owner); }
+    vga_putchar('\n');
+}
+
+static void cmd_fat(int argc, char **argv) {
+    (void)argc; (void)argv;
+    static char owners[TOTAL_BLOCKS][13];
+    build_owner_map(owners);
+
+    vga_puts("FAT Table (32 blocks x 128 KB)\n");
+    vga_puts("Block  Status     Owner\n");
+    vga_puts("-----  ---------  ------------\n");
+
+    for (uint16_t i = 0; i < TOTAL_BLOCKS; i++) {
+        if (i == 20) {
+            vga_puts("--- Press any key for more ---\n");
+            keyboard_getchar();
+        }
+        print_fat_row(i, owners[i]);
+    }
+
+    vga_puts("-----  ---------  ------------\n");
+    uint16_t used = 0, free_cnt = 0;
+    for (uint16_t i = DATA_START_BLOCK; i < TOTAL_BLOCKS; i++) {
+        if (fat_next(i) == FAT_FREE) free_cnt++; else used++;
+    }
+    kprintf("Used: %u block(s)   Free: %u block(s)\n", (uint32_t)used, (uint32_t)free_cnt);
+}
 
 static void cmd_shutdown(int argc, char **argv) {
     (void)argc; (void)argv;
@@ -91,6 +167,7 @@ static const cmd_t commands[] = {
     { "cat",      cmd_cat      },
     { "write",    cmd_write    },
     { "edit",     cmd_edit     },
+    { "fat",      cmd_fat      },
     { "shutdown", cmd_shutdown },
     { NULL,       NULL         },
 };

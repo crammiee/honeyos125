@@ -156,5 +156,6 @@ cat <file>      print file contents
 write <file>    create/overwrite file (end input with '.')
 edit <file>     rewrite an existing file
 rm <name>       delete a file or directory
+fat             display the file allocation table (used/free blocks)
 shutdown        halt the OS (QEMU and VirtualBox; use VM power-off on other platforms)
 ```
