@@ -49,6 +49,7 @@ static void cmd_help(int argc, char **argv) {
     vga_puts("Available commands:\n");
     vga_puts("  help            - show this message\n");
     vga_puts("  clear           - clear the screen\n");
+    vga_puts("  tree            - show full directory tree\n");
     vga_puts("  ls              - list current directory\n");
     vga_puts("  mkdir <name>    - create a directory\n");
     vga_puts("  cd <name>       - change directory (.. to go up)\n");
@@ -62,6 +63,39 @@ static void cmd_help(int argc, char **argv) {
 }
 
 static void cmd_clear (int argc, char **argv) { (void)argc; (void)argv; vga_clear(); }
+
+static void tree_print_name(const dir_entry_t *e) {
+    for (int k = 0; k < 8 && e->name[k] != ' '; k++) vga_putchar(e->name[k]);
+    if (e->attr == ATTR_FILE && e->ext[0] != ' ') {
+        vga_putchar('.');
+        for (int k = 0; k < 3 && e->ext[k] != ' '; k++) vga_putchar(e->ext[k]);
+    }
+}
+
+static void tree_recurse(uint16_t dir_sector, int depth) {
+    uint8_t buf[SECTOR_SIZE];
+    for (uint16_t sec = dir_sector; sec; sec = dir_next_sector(dir_sector, sec)) {
+        sector_read(sec, buf);
+        dir_entry_t *e = (dir_entry_t *)buf;
+        for (int i = 0; i < (int)DIR_ENTRIES_PER_SECTOR; i++) {
+            if (e[i].attr == ATTR_FREE) continue;
+            if (e[i].name[0] == '.') continue;
+            if (e[i].attr != ATTR_FILE && e[i].attr != ATTR_DIR) continue;
+            for (int d = 0; d < depth; d++) vga_puts("  ");
+            vga_puts(e[i].attr == ATTR_DIR ? "+ " : "- ");
+            tree_print_name(&e[i]);
+            vga_putchar('\n');
+            if (e[i].attr == ATTR_DIR)
+                tree_recurse(block_to_sector(e[i].first_block), depth + 1);
+        }
+    }
+}
+
+static void cmd_tree(int argc, char **argv) {
+    (void)argc; (void)argv;
+    vga_puts("root\n");
+    tree_recurse(ROOT_DIR_SECTOR, 1);
+}
 static void cmd_ls    (int argc, char **argv) { (void)argc; (void)argv; dir_list(); }
 static void cmd_mkdir (int argc, char **argv) { if (argc < 2) { vga_puts("Usage: mkdir <name>\n"); return; } dir_create(argv[1]); }
 static void cmd_cd    (int argc, char **argv) { if (argc < 2) { vga_puts("Usage: cd <name>\n");    return; } dir_change(argv[1]); }
@@ -208,6 +242,7 @@ typedef struct { const char *name; void (*fn)(int, char **); } cmd_t;
 static const cmd_t commands[] = {
     { "help",     cmd_help     },
     { "clear",    cmd_clear    },
+    { "tree",     cmd_tree     },
     { "ls",       cmd_ls       },
     { "mkdir",    cmd_mkdir    },
     { "cd",       cmd_cd       },
