@@ -89,6 +89,7 @@ void vga_print_welcome(void) {
     vga_puts("============================================================\n");
     vga_puts("                     Welcome to HoneyOS                    \n");
     vga_puts("          CMSC 125 Operating Systems Project                \n");
+    vga_puts("               Alcaraz  |  Canete  |  Putalan               \n");
     vga_puts("============================================================\n");
 
     vga_set_color(VGA_COLOR(VGA_LGRAY, VGA_BLACK));
