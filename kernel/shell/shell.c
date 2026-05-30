@@ -69,7 +69,9 @@ static void cmd_edit  (int argc, char **argv) { if (argc < 2) { vga_puts("Usage:
 static void cmd_shutdown(int argc, char **argv) {
     (void)argc; (void)argv;
     vga_puts("Shutting down HoneyOS... Goodbye!\n");
-    outw(0x604, 0x2000);
+    outw(0x604, 0x2000);  /* QEMU */
+    outw(0xB004, 0x2000); /* VirtualBox / Bochs (older) */
+    outw(0x4004, 0x3400); /* VirtualBox (newer ACPI) */
     __asm__ volatile ("cli; hlt");
     while (1);
 }
