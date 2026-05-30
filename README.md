@@ -42,7 +42,7 @@ Sector reads and writes go directly to the emulated hard disk via ATA PIO (`kern
 
 ### Shell
 
-A REPL loop (`kernel/shell/shell.c`) that prints a prompt, reads a line character by character, tokenises on spaces, and dispatches to a static command table. Supports `ls`, `mkdir`, `cd`, `cat`, `write`, `edit`, `rm`, `help`, and `shutdown`. `shutdown` tries QEMU, VirtualBox (old and new ACPI), and Bochs poweroff ports in sequence before falling back to `cli; hlt`.
+A REPL loop (`kernel/shell/shell.c`) that prints a prompt, reads a line character by character, tokenises on spaces, and dispatches to a static command table. Supports `help`, `clear`, `tree`, `ls`, `mkdir`, `cd`, `rm` (with `-r` for recursive deletion), `cat`, `write`, `edit`, `fat`, and `shutdown`. `shutdown` tries QEMU, VirtualBox (old and new ACPI), and Bochs poweroff ports in sequence before falling back to `cli; hlt`.
 
 ## Dependencies
 
