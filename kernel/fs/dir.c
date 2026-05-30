@@ -94,18 +94,19 @@ void dir_create(const char *name) {
     /* A sub-directory is its own FAT chain. Allocate its first block and seed
        it with a ".." entry (always slot 0) pointing back at the parent, so
        "cd .." can find its way home later. */
-    uint16_t blk = fat_alloc();
+    uint16_t blk = fat_alloc();   /* blk is a block number (0-31) */
     if (blk == FAT_EOC) { vga_puts("mkdir: disk full\n"); return; }
 
+    uint16_t blk_sector = block_to_sector(blk);
     uint8_t buf[SECTOR_SIZE];
     mem_set(buf, 0, SECTOR_SIZE);
     dir_entry_t *dotdot = (dir_entry_t *)buf;
     name_to_fat(dotdot->name, "..", 8);
     dotdot->ext[0] = dotdot->ext[1] = dotdot->ext[2] = ' ';
     dotdot->attr        = ATTR_DIR;
-    dotdot->first_block = cwd_sector;   /* parent's first sector */
+    dotdot->first_block = cwd_sector;   /* store parent's sector for cd .. */
     dotdot->size        = 0;
-    sector_write(blk, buf);
+    sector_write(blk_sector, buf);
 
     /* Record the new directory in the parent directory. */
     dir_entry_t *slot = dir_find_free(cwd_sector);
@@ -148,7 +149,7 @@ void dir_change(const char *name) {
         vga_puts("cd: not a directory: "); vga_puts(name); vga_putchar('\n');
         return;
     }
-    cwd_sector = e->first_block;   /* the fix: actually move into the directory */
+    cwd_sector = block_to_sector(e->first_block);   /* convert block number to sector */
     path_push(name);
 }
 
@@ -162,7 +163,7 @@ void dir_delete(const char *name) {
         vga_puts("rmdir: not a directory: "); vga_puts(name); vga_putchar('\n');
         return;
     }
-    if (!dir_is_empty(e->first_block)) {
+    if (!dir_is_empty(block_to_sector(e->first_block))) {
         vga_puts("rmdir: directory not empty: "); vga_puts(name); vga_putchar('\n');
         return;
     }

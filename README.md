@@ -22,18 +22,19 @@ Polling driver (`kernel/io/keyboard.c`) that reads scancodes from port `0x60` an
 
 ### FAT Filesystem
 
-A FAT16-style linked-allocation filesystem (`kernel/fs/`). The 8192-sector (4 MB) disk is laid out as:
+A FAT16-style linked-allocation filesystem (`kernel/fs/`). The 4 MB disk is divided into 32 blocks of 128 KB each (256 sectors per block). Layout:
 
 | Sectors | Region | Notes |
 |---------|--------|-------|
 | 0 | MBR | written by `boot.asm` |
 | 1–32 | Kernel binary | 32 sectors = 16 KB, loaded by the bootloader |
 | 33 | Superblock | magic, geometry |
-| 34–65 | FAT table | 32 sectors → 8192 `uint16_t` entries |
-| 66–97 | Root directory | 32 sectors, fixed size |
-| 98+ | Data blocks | files and sub-directories |
+| 34 | FAT table | 1 sector → 32 `uint16_t` entries (one per 128 KB block) |
+| 35–66 | Root directory | 32 sectors, fixed size |
+| 67–255 | (reserved) | remainder of block 0 |
+| 256–8191 | Data blocks | blocks 1–31, 128 KB each (files and sub-directories) |
 
-Each FAT entry is a `uint16_t`: `0x0000` = free, `0xFFFF` = end of chain, otherwise the index of the next block. File and directory metadata is stored as 32-byte 8.3-format entries (`dir_entry_t`). The root directory is a fixed contiguous region; every sub-directory is its own FAT chain (and grows by appending a block when its current sectors fill up). Sub-directories store a `..` entry in slot 0 pointing back at the parent so `cd ..` can walk home. On first boot the disk is formatted; subsequent boots detect the magic number `0x484F4E45` ("HONE") in the superblock and mount the existing filesystem. If no ATA drive responds at all (e.g. when booted from a read-only CD/ISO with no hard disk), `fs_init` formats and runs an ephemeral in-RAM filesystem instead, so the shell is still fully usable — changes just aren't saved.
+Each FAT entry is a `uint16_t`: `0x0000` = free, `0xFFFF` = end of chain, otherwise the index of the next block. File and directory metadata is stored as 28-byte 8.3-format entries (`dir_entry_t`). The root directory is a fixed contiguous region (32 sectors); every sub-directory occupies exactly one 128 KB block — large enough for over 4000 entries, so no FAT chaining is needed. Sub-directories store a `..` entry in slot 0 pointing back at the parent so `cd ..` can walk home. On first boot the disk is formatted; subsequent boots detect the magic number `0x484F4E45` ("HONE") in the superblock and mount the existing filesystem. If no ATA drive responds at all (e.g. when booted from a read-only CD/ISO with no hard disk), `fs_init` formats and runs an ephemeral in-RAM filesystem instead, so the shell is still fully usable — changes just aren't saved.
 
 ### ATA PIO Disk I/O
 

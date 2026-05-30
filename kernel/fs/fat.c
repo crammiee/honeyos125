@@ -13,9 +13,10 @@
  *   Sector  0        : MBR (written by boot.asm, not touched here)
  *   Sectors 1–32     : Kernel binary
  *   Sector  33       : Superblock
- *   Sectors 34–65    : FAT table  (8 192 entries × 2 bytes)
- *   Sectors 66–97    : Root directory region (512 dir_entry_t slots)
- *   Sectors 98+      : Data blocks
+ *   Sector  34       : FAT table  (32 entries × 2 bytes = 64 bytes, 1 sector)
+ *   Sectors 35–66    : Root directory region (512 dir_entry_t slots)
+ *   Block   0        : Sectors 0–255 (system — MBR, kernel, superblock, FAT, root dir)
+ *   Blocks  1–31     : Sectors 256–8191 (data — 128 KB per block)
  */
 
 #include "fat.h"
@@ -40,7 +41,7 @@ char     cwd_path[CWD_PATH_MAX] = "root";   /* shown in the shell prompt */
    in-memory array instead. Sized to cover the metadata regions plus a useful
    pool of data blocks; changes are NOT persisted across reboots. Lives in BSS,
    so it costs nothing in the on-disk kernel image. */
-#define RAMDISK_SECTORS 1024                       /* 512 KB RAM disk */
+#define RAMDISK_SECTORS 1024   /* 4 blocks × 128 KB = 512 KB; blocks 1-3 usable */
 static uint8_t ram_disk[RAMDISK_SECTORS * SECTOR_SIZE];
 static int     ram_mode = 0;                       /* 0 = ATA disk, 1 = RAM */
 
@@ -95,21 +96,25 @@ uint16_t fat_next(uint16_t block) {
     return (block < FAT_MAX_ENTRIES) ? fat_table[block] : FAT_EOC;
 }
 
+/* Write the in-memory FAT table back to its single on-disk sector. */
+static void fat_flush(void) {
+    uint8_t buf[SECTOR_SIZE];
+    mem_set(buf, 0, SECTOR_SIZE);
+    for (int i = 0; i < (int)sizeof(fat_table); i++)
+        buf[i] = ((uint8_t *)fat_table)[i];
+    sector_write(FAT_START_SECTOR, buf);
+}
+
 void fat_set(uint16_t block, uint16_t val) {
     if (block >= FAT_MAX_ENTRIES) return;
     fat_table[block] = val;
-    /* Write the affected FAT sector back to disk */
-    uint16_t eps = SECTOR_SIZE / sizeof(uint16_t);   /* entries per sector */
-    uint16_t sec = block / eps;
-    sector_write(FAT_START_SECTOR + sec,
-                 (const uint8_t *)&fat_table[sec * eps]);
+    fat_flush();
 }
 
 uint16_t fat_alloc(void) {
-    /* The RAM disk is smaller than the nominal on-disk geometry, so cap the
-       search at its size when running RAM-backed. */
-    uint16_t limit = ram_mode ? RAMDISK_SECTORS : DISK_SECTORS;
-    for (uint16_t i = DATA_START_SECTOR; i < limit; i++) {
+    /* In RAM mode the disk is 4 blocks (0-3); block 0 is system, 1-3 are data. */
+    uint16_t limit = ram_mode ? (RAMDISK_SECTORS / SECTORS_PER_BLOCK) : TOTAL_BLOCKS;
+    for (uint16_t i = DATA_START_BLOCK; i < limit; i++) {
         if (fat_table[i] == FAT_FREE) { fat_set(i, FAT_EOC); return i; }
     }
     return FAT_EOC;   /* disk full */
@@ -128,17 +133,17 @@ void fat_free_chain(uint16_t first) {
  * --------------------------------------------------------------------- */
 
 /* Walk a directory's sectors. The root directory is a fixed contiguous
-   region (ROOT_DIR_SECTORS sectors); every other directory is a FAT chain,
-   exactly like a file. Returns the sector after `cur`, or 0 when there are
-   no more. `first` is the directory's starting sector, used to tell the
-   root region apart from a chained sub-directory. */
+   region (ROOT_DIR_SECTORS sectors). Sub-directories occupy exactly one
+   128 KB block (SECTORS_PER_BLOCK sectors) — large enough that they never
+   need to grow via a FAT chain. Returns the next sector, or 0 when done. */
 uint16_t dir_next_sector(uint16_t first, uint16_t cur) {
     if (first == ROOT_DIR_SECTOR) {
         if (cur + 1 < ROOT_DIR_SECTOR + ROOT_DIR_SECTORS) return cur + 1;
         return 0;
     }
-    uint16_t nxt = fat_next(cur);
-    return (nxt == FAT_EOC || nxt == FAT_FREE) ? 0 : nxt;
+    /* Sub-directory: walk within its single block */
+    if (cur + 1 < first + SECTORS_PER_BLOCK) return cur + 1;
+    return 0;
 }
 
 /* Write the currently buffered directory sector back to disk. */
@@ -167,28 +172,18 @@ dir_entry_t *dir_find(const char *name, uint16_t dir_sec) {
     return NULL;
 }
 
-/* Find a free entry slot in a directory. If the directory is a chained
-   sub-directory and every existing sector is full, grow it by appending a
-   fresh block to its FAT chain. The root region is fixed, so it returns
-   NULL when full. */
+/* Find a free entry slot in a directory. Both root (fixed region) and
+   sub-directories (one 128 KB block) return NULL when full — sub-dirs
+   hold 256 × 16 = 4096 entries so in practice they never fill up. */
 dir_entry_t *dir_find_free(uint16_t dir_sec) {
-    uint16_t last = dir_sec;
     for (uint16_t sec = dir_sec; sec; sec = dir_next_sector(dir_sec, sec)) {
         sector_read(sec, dir_buf);
         dir_buf_sector = sec;
         dir_entry_t *e = (dir_entry_t *)dir_buf;
         for (int i = 0; i < (int)DIR_ENTRIES_PER_SECTOR; i++)
             if (e[i].attr == ATTR_FREE) return &e[i];
-        last = sec;
     }
-    if (dir_sec == ROOT_DIR_SECTOR) return NULL;   /* fixed-size root */
-    uint16_t blk = fat_alloc();
-    if (blk == FAT_EOC) return NULL;               /* disk full */
-    fat_set(last, blk);                            /* append to the chain */
-    mem_set(dir_buf, 0, SECTOR_SIZE);
-    sector_write(blk, dir_buf);
-    dir_buf_sector = blk;
-    return (dir_entry_t *)dir_buf;                 /* entry 0 is now free */
+    return NULL;
 }
 
 /* A directory counts as empty when it holds no entries other than ".." . */
@@ -211,9 +206,10 @@ int dir_is_empty(uint16_t dir_first) {
  * --------------------------------------------------------------------- */
 
 static void fat_load(void) {
-    uint8_t *p = (uint8_t *)fat_table;
-    for (int s = 0; s < FAT_SECTORS; s++)
-        sector_read(FAT_START_SECTOR + s, p + s * SECTOR_SIZE);
+    uint8_t buf[SECTOR_SIZE];
+    sector_read(FAT_START_SECTOR, buf);
+    for (int i = 0; i < (int)sizeof(fat_table); i++)
+        ((uint8_t *)fat_table)[i] = buf[i];
 }
 
 static void fs_format(void) {
@@ -229,9 +225,8 @@ static void fs_format(void) {
     sector_write(SUPERBLOCK_SECTOR, (const uint8_t *)&sb);
 
     mem_set(fat_table, 0, sizeof(fat_table));
-    for (int s = 0; s < FAT_SECTORS; s++)
-        sector_write(FAT_START_SECTOR + s,
-                     (const uint8_t *)fat_table + s * SECTOR_SIZE);
+    fat_table[0] = FAT_EOC;   /* block 0 is the system block, always reserved */
+    fat_flush();
 
     uint8_t empty[SECTOR_SIZE];
     mem_set(empty, 0, SECTOR_SIZE);

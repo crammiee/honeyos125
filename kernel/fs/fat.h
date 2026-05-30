@@ -4,19 +4,26 @@
 #include "../types.h"
 
 /* -----------------------------------------------------------------------
- * Disk layout (512-byte sectors, 4 MB image)
+ * Disk layout (512-byte sectors, 4 MB image, 128 KB blocks)
  * --------------------------------------------------------------------- */
 #define SECTOR_SIZE             512
+#define SECTORS_PER_BLOCK       256                              /* 128 KB per block */
+#define BLOCK_SIZE              (SECTORS_PER_BLOCK * SECTOR_SIZE)
 #define DISK_SECTORS            8192
+#define TOTAL_BLOCKS            (DISK_SECTORS / SECTORS_PER_BLOCK)  /* 32 */
 
 #define SUPERBLOCK_SECTOR       33   /* sectors 1-32 are the kernel binary */
 #define FAT_START_SECTOR        34
-#define FAT_SECTORS             32   /* 32 × 512 = 16 384 bytes → 8 192 uint16_t entries */
-#define ROOT_DIR_SECTOR         66   /* = FAT_START_SECTOR + FAT_SECTORS */
-#define ROOT_DIR_SECTORS        32
-#define DATA_START_SECTOR       98   /* = ROOT_DIR_SECTOR + ROOT_DIR_SECTORS */
+#define FAT_SECTORS             1    /* 32 entries × 2 bytes = 64 bytes, fits in 1 sector */
+#define ROOT_DIR_SECTOR         35   /* = FAT_START_SECTOR + FAT_SECTORS */
+#define ROOT_DIR_SECTORS        32   /* sectors 35-66, all within block 0 */
+#define DATA_START_BLOCK        1    /* block 0 is reserved for system */
+#define DATA_START_SECTOR       (DATA_START_BLOCK * SECTORS_PER_BLOCK)  /* 256 */
 
-#define FAT_MAX_ENTRIES  (FAT_SECTORS * SECTOR_SIZE / sizeof(uint16_t))  /* 8 192 */
+#define FAT_MAX_ENTRIES         TOTAL_BLOCKS  /* 32 — one entry per 128 KB block */
+
+/* Convert a block number to its first sector */
+#define block_to_sector(b)      ((uint16_t)((b) * SECTORS_PER_BLOCK))
 
 /* FAT entry sentinels (FAT16-style) */
 #define FAT_FREE  0x0000

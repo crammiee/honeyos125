@@ -54,10 +54,13 @@ void file_read(const char *name) {
     uint16_t block = e->first_block;
     uint32_t left  = e->size;
     while (block != FAT_EOC && block != FAT_FREE && left > 0) {
-        sector_read(block, buf);
-        uint32_t n = left < SECTOR_SIZE ? left : SECTOR_SIZE;
-        for (uint32_t i = 0; i < n; i++) vga_putchar((char)buf[i]);
-        left -= n;
+        uint16_t base = block_to_sector(block);
+        for (int s = 0; s < SECTORS_PER_BLOCK && left > 0; s++) {
+            sector_read(base + s, buf);
+            uint32_t n = left < SECTOR_SIZE ? left : SECTOR_SIZE;
+            for (uint32_t i = 0; i < n; i++) vga_putchar((char)buf[i]);
+            left -= n;
+        }
         block = fat_next(block);
     }
     vga_putchar('\n');
@@ -93,7 +96,7 @@ void file_write(const char *name) {
     }
     if (total == 0) { vga_puts("(empty file — nothing written)\n"); return; }
 
-    /* Write content into FAT blocks */
+    /* Write content into FAT blocks (one block = 128 KB = SECTORS_PER_BLOCK sectors) */
     uint16_t first = FAT_EOC, prev = FAT_EOC;
     uint32_t written = 0;
     while (written < total) {
@@ -102,13 +105,16 @@ void file_write(const char *name) {
         if (first == FAT_EOC) first = block;
         if (prev  != FAT_EOC) fat_set(prev, block);
 
-        uint8_t buf[SECTOR_SIZE];
-        mem_set(buf, 0, SECTOR_SIZE);
-        uint32_t chunk = total - written;
-        if (chunk > SECTOR_SIZE) chunk = SECTOR_SIZE;
-        mem_copy(buf, content + written, chunk);
-        sector_write(block, buf);
-        written += chunk;
+        uint16_t base = block_to_sector(block);
+        for (int s = 0; s < SECTORS_PER_BLOCK && written < total; s++) {
+            uint8_t buf[SECTOR_SIZE];
+            mem_set(buf, 0, SECTOR_SIZE);
+            uint32_t chunk = total - written;
+            if (chunk > SECTOR_SIZE) chunk = SECTOR_SIZE;
+            mem_copy(buf, content + written, chunk);
+            sector_write(base + s, buf);
+            written += chunk;
+        }
         prev = block;
     }
 
@@ -160,7 +166,7 @@ void file_delete(const char *name) {
     }
     /* Refuse to remove a non-empty directory, so we never orphan the blocks
        its children point to. */
-    if (e->attr == ATTR_DIR && !dir_is_empty(e->first_block)) {
+    if (e->attr == ATTR_DIR && !dir_is_empty(block_to_sector(e->first_block))) {
         vga_puts("rm: directory not empty: "); vga_puts(name); vga_putchar('\n');
         return;
     }
