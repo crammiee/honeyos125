@@ -28,7 +28,7 @@ ASM_OBJS := $(patsubst %.asm, $(BUILD)/%.o, $(ASM_SRCS))
 
 ALL_OBJS := $(ASM_OBJS) $(C_OBJS)
 
-.PHONY: all run run-debug run-iso run-iso-persist iso clean
+.PHONY: all run run-debug run-iso run-iso-persist iso artifacts clean
 
 all: disk.img
 
@@ -83,5 +83,14 @@ run-iso-persist: iso
 	$(QEMU) -cdrom honeyos.iso -hda disk.img -boot d \
 	        -display curses -no-reboot
 
+honeyos.vdi: disk.img
+	qemu-img convert -O vdi disk.img honeyos.vdi
+	@echo "[OK] honeyos.vdi ready"
+
+# Build all distributable artifacts: raw disk image, bootable ISO, and VDI.
+# Requires xorriso (for ISO) and qemu-img (for VDI).
+artifacts: iso honeyos.vdi
+	@echo "[OK] artifacts ready: disk.img  honeyos.iso  honeyos.vdi"
+
 clean:
-	rm -rf $(BUILD) disk.img honeyos.iso qemu.log
+	rm -rf $(BUILD) disk.img honeyos.iso honeyos.vdi qemu.log
