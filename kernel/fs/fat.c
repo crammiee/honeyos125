@@ -31,6 +31,7 @@ static uint8_t  dir_buf[SECTOR_SIZE];
 static uint16_t dir_buf_sector;
 
 uint16_t cwd_sector = ROOT_DIR_SECTOR;
+char     cwd_path[CWD_PATH_MAX] = "root";   /* shown in the shell prompt */
 
 /* -----------------------------------------------------------------------
  * Internal helpers
@@ -227,4 +228,6 @@ void fs_init(void) {
         kprintf("HoneyOS FS: mounted existing disk.\n");
     }
     cwd_sector = ROOT_DIR_SECTOR;
+    cwd_path[0] = 'r'; cwd_path[1] = 'o';
+    cwd_path[2] = 'o'; cwd_path[3] = 't'; cwd_path[4] = '\0';
 }

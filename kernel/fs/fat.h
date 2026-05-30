@@ -61,6 +61,9 @@ typedef struct {
 
 extern uint16_t cwd_sector;  /* first sector of the current working directory */
 
+#define CWD_PATH_MAX 128
+extern char cwd_path[CWD_PATH_MAX];  /* printable path, e.g. "root/subdir" */
+
 /* -----------------------------------------------------------------------
  * API
  * --------------------------------------------------------------------- */

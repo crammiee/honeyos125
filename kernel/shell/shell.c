@@ -102,7 +102,8 @@ void shell_run(void) {
     char *argv[SHELL_ARGC_MAX];
 
     vga_set_color(VGA_COLOR(VGA_LCYAN, VGA_BLACK));
-    vga_puts("honey> ");
+    vga_puts(cwd_path);
+    vga_puts("> ");
     vga_set_color(VGA_COLOR(VGA_WHITE, VGA_BLACK));
 
     read_line(line, SHELL_LINE_MAX);

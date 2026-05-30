@@ -26,6 +26,26 @@ static void print_fat_name(const char *field, int len) {
         vga_putchar(field[i]);
 }
 
+static int str_length(const char *s) { int n = 0; while (s[n]) n++; return n; }
+
+/* Append "/name" to the prompt path (name capped at 8 chars to match the
+   stored 8.3 directory name). */
+static void path_push(const char *name) {
+    int len = str_length(cwd_path);
+    if (len + 1 < CWD_PATH_MAX) cwd_path[len++] = '/';
+    for (int i = 0; i < 8 && name[i] && len < CWD_PATH_MAX - 1; i++)
+        cwd_path[len++] = name[i];
+    cwd_path[len] = '\0';
+}
+
+/* Drop the last "/segment" from the prompt path (used by "cd .."). */
+static void path_pop(void) {
+    int len = str_length(cwd_path);
+    while (len > 0 && cwd_path[len - 1] != '/') len--;
+    if (len > 0) len--;          /* also drop the '/' itself */
+    cwd_path[len] = '\0';
+}
+
 /* -----------------------------------------------------------------------
  * dir_list
  * --------------------------------------------------------------------- */
@@ -119,7 +139,7 @@ void dir_change(const char *name) {
         sector_read(cwd_sector, buf);
         dir_entry_t *dotdot = (dir_entry_t *)buf;   /* slot 0 == ".." */
         cwd_sector = dotdot->first_block;
-        vga_puts("Changed to parent directory.\n");
+        path_pop();
         return;
     }
 
@@ -129,7 +149,7 @@ void dir_change(const char *name) {
         return;
     }
     cwd_sector = e->first_block;   /* the fix: actually move into the directory */
-    kprintf("Changed to '%s'.\n", name);
+    path_push(name);
 }
 
 /* -----------------------------------------------------------------------
