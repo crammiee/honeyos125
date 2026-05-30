@@ -62,7 +62,7 @@ static void cmd_help(int argc, char **argv) {
     vga_puts("  shutdown        - halt the OS\n");
 }
 
-static void cmd_clear (int argc, char **argv) { (void)argc; (void)argv; vga_clear(); }
+static void cmd_clear (int argc, char **argv) { (void)argc; (void)argv; vga_clear(); vga_puts("Screen cleared.\n"); }
 
 static void tree_print_name(const dir_entry_t *e) {
     for (int k = 0; k < 8 && e->name[k] != ' '; k++) vga_putchar(e->name[k]);

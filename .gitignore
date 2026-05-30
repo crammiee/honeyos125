@@ -6,3 +6,5 @@ honeyos.iso
 qemu.log
 honeyos.vdi
 serial.log
+demo/
+demo.sh
