@@ -48,6 +48,7 @@ static void cmd_help(int argc, char **argv) {
     (void)argc; (void)argv;
     vga_puts("Available commands:\n");
     vga_puts("  help            - show this message\n");
+    vga_puts("  clear           - clear the screen\n");
     vga_puts("  ls              - list current directory\n");
     vga_puts("  mkdir <name>    - create a directory\n");
     vga_puts("  cd <name>       - change directory (.. to go up)\n");
@@ -60,6 +61,7 @@ static void cmd_help(int argc, char **argv) {
     vga_puts("  shutdown        - halt the OS\n");
 }
 
+static void cmd_clear (int argc, char **argv) { (void)argc; (void)argv; vga_clear(); }
 static void cmd_ls    (int argc, char **argv) { (void)argc; (void)argv; dir_list(); }
 static void cmd_mkdir (int argc, char **argv) { if (argc < 2) { vga_puts("Usage: mkdir <name>\n"); return; } dir_create(argv[1]); }
 static void cmd_cd    (int argc, char **argv) { if (argc < 2) { vga_puts("Usage: cd <name>\n");    return; } dir_change(argv[1]); }
@@ -205,6 +207,7 @@ typedef struct { const char *name; void (*fn)(int, char **); } cmd_t;
 
 static const cmd_t commands[] = {
     { "help",     cmd_help     },
+    { "clear",    cmd_clear    },
     { "ls",       cmd_ls       },
     { "mkdir",    cmd_mkdir    },
     { "cd",       cmd_cd       },

@@ -149,6 +149,7 @@ qemu-img convert -O vmdk disk.img honeyos.vmdk
 
 ```text
 help            show available commands
+clear           clear the screen
 ls              list current directory
 mkdir <name>    create a directory
 cd <name>       change directory (.. to go up)
