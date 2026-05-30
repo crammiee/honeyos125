@@ -4,3 +4,4 @@ honeyos.iso
 *.bin
 *.o
 qemu.log
+honeyos.vdi

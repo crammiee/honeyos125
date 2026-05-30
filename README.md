@@ -42,14 +42,14 @@ A REPL loop (`kernel/shell/shell.c`) that prints a prompt, reads a line characte
 
 **Arch / Manjaro:**
 ```bash
-sudo pacman -S base-devel gcc-multilib nasm qemu-system-x86 qemu-ui-curses
+sudo pacman -S base-devel gcc-multilib nasm qemu-system-x86 qemu-ui-curses qemu-img xorriso
 ```
 > `gcc-multilib` replaces `gcc` — pacman will ask you to confirm the swap.  
 > `qemu-ui-curses` is a separate package on Arch; without it QEMU silently drops curses support.
 
 **Debian / Ubuntu:**
 ```bash
-sudo apt install build-essential gcc-multilib nasm qemu-system-x86
+sudo apt install build-essential gcc-multilib nasm qemu-system-x86 qemu-utils xorriso
 ```
 
 1. Install the dependencies above for your distro, then:
@@ -79,13 +79,13 @@ WSL2 is the recommended path — it gives you a full Linux environment where all
    **Arch (`pacman`):**
    ```bash
    sudo pacman -Syy
-   sudo pacman -S base-devel gcc-multilib nasm qemu-system-x86 qemu-ui-curses
+   sudo pacman -S base-devel gcc-multilib nasm qemu-system-x86 qemu-ui-curses qemu-img xorriso
    ```
 
    **Ubuntu/Debian (`apt`):**
    ```bash
    sudo apt update
-   sudo apt install build-essential gcc-multilib nasm qemu-system-x86
+   sudo apt install build-essential gcc-multilib nasm qemu-system-x86 qemu-utils xorriso
    ```
 
 3. Clone and build:
@@ -110,6 +110,7 @@ WSL2 is the recommended path — it gives you a full Linux environment where all
 | `make` | Build orchestration |
 | `dd` | Assemble the 1.44 MB disk image (standard on Linux) |
 | `xorriso` | Build the bootable ISO (`make iso`) — optional |
+| `qemu-img` (`qemu-utils` on Debian/Ubuntu) | Convert `disk.img` to `.vdi`/`.vmdk` for VirtualBox/VMware — optional |
 
 See [Getting Started](#getting-started) for distro-specific install commands.
 
