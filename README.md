@@ -64,6 +64,14 @@ A REPL loop (`kernel/shell/shell.c`) that prints a prompt, reads a line characte
 | `xorriso` | `make iso`, `make run-iso`, `make run-iso-persist`, `make artifacts` — builds a bootable ISO for VMs |
 | `qemu-img` (`qemu-utils` on Debian/Ubuntu) | `make artifacts` — converts `disk.img` to `.vdi` (VirtualBox) and `.vmdk` (VMware) |
 
+## Download
+
+Pre-built bootable artifacts are available on the [Releases](../../releases) page — no build tools required:
+
+- **`honeyos.iso`** — boot in QEMU or attach as CD/DVD in VirtualBox
+- **`honeyos.vdi`** — attach as a hard disk in VirtualBox for a persistent filesystem
+- **`disk.img`** — raw disk image for QEMU
+
 ## Getting Started
 
 HoneyOS is developed on Linux. Windows users have two options — both give a full Linux environment where the instructions below apply as normal:
