@@ -1,10 +1,14 @@
 /*
  * HoneyOS Directory Operations
  *
- * list   — scan the directory buffer and print each entry.
- * create — add a new ATTR_DIR entry in the current directory.
- * change — update cwd_sector ("..") goes back to root.
- * delete — clear a directory entry (does not recurse).
+ * list   — scan the current directory and print each entry with type and size.
+ * create — allocate a block for a new sub-directory, seed it with "..", and
+ *          add an entry in the parent directory.
+ * change — update cwd_sector; ".." reads the parent pointer from slot 0.
+ * delete — remove an empty directory entry and free its block.
+ *
+ * Sub-directories each own exactly one 128 KB block (FAT_EOC, no chaining).
+ * The root directory is a fixed 32-sector region and uses no FAT entries.
  */
 
 #include "dir.h"
@@ -15,12 +19,14 @@ static void mem_set(void *dst, uint8_t val, size_t n) {
     uint8_t *p = (uint8_t *)dst; while (n--) *p++ = val;
 }
 
+/* Copy src into a space-padded FAT 8.3 name field of length dst_len */
 static void name_to_fat(char *dst, const char *src, int dst_len) {
     int i = 0;
     while (i < dst_len && src[i]) { dst[i] = src[i]; i++; }
     while (i < dst_len) dst[i++] = ' ';
 }
 
+/* Print a space-padded FAT name field, stopping at the first space */
 static void print_fat_name(const char *field, int len) {
     for (int i = 0; i < len && field[i] != ' '; i++)
         vga_putchar(field[i]);
@@ -28,8 +34,10 @@ static void print_fat_name(const char *field, int len) {
 
 static int str_length(const char *s) { int n = 0; while (s[n]) n++; return n; }
 
-/* Append "/name" to the prompt path (name capped at 8 chars to match the
-   stored 8.3 directory name). */
+/*
+ * Append "/name" to the shell prompt path.
+ * Name is capped at 8 characters to match the stored 8.3 directory name.
+ */
 static void path_push(const char *name) {
     int len = str_length(cwd_path);
     if (len + 1 < CWD_PATH_MAX) cwd_path[len++] = '/';
@@ -38,11 +46,11 @@ static void path_push(const char *name) {
     cwd_path[len] = '\0';
 }
 
-/* Drop the last "/segment" from the prompt path (used by "cd .."). */
+/* Remove the last "/segment" from the prompt path when navigating up */
 static void path_pop(void) {
     int len = str_length(cwd_path);
     while (len > 0 && cwd_path[len - 1] != '/') len--;
-    if (len > 0) len--;          /* also drop the '/' itself */
+    if (len > 0) len--;   /* also drop the '/' itself */
     cwd_path[len] = '\0';
 }
 
@@ -50,22 +58,27 @@ static void path_pop(void) {
  * dir_list
  * --------------------------------------------------------------------- */
 
+/*
+ * Print all entries in the current directory.
+ * Shows "[FILE]" or "[DIR]" prefix, the 8.3 name, and the file size in bytes.
+ * Entries named "." and ".." are hidden.
+ */
 void dir_list(void) {
     uint8_t buf[SECTOR_SIZE];
     int count = 0;
 
-    /* Walk every sector of the current directory (root region or chain). */
     for (uint16_t sec = cwd_sector; sec; sec = dir_next_sector(cwd_sector, sec)) {
         sector_read(sec, buf);
         dir_entry_t *e = (dir_entry_t *)buf;
         for (int i = 0; i < (int)DIR_ENTRIES_PER_SECTOR; i++) {
             if (e[i].attr == ATTR_FREE) continue;
-            if (e[i].name[0] == '.') continue;   /* hide "." and ".." */
+            if (e[i].name[0] == '.') continue;   /* hide navigation entries */
             if (e[i].attr == ATTR_FILE)      vga_puts("  [FILE] ");
             else if (e[i].attr == ATTR_DIR)  vga_puts("  [DIR]  ");
             else continue;
 
             print_fat_name(e[i].name, 8);
+            /* Print extension if present */
             if (e[i].ext[0] != ' ') { vga_putchar('.'); print_fat_name(e[i].ext, 3); }
             if (e[i].attr == ATTR_FILE) { vga_puts("  ("); kprintf("%u", e[i].size); vga_puts(" bytes)"); }
             vga_putchar('\n');
@@ -79,8 +92,19 @@ void dir_list(void) {
  * dir_create
  * --------------------------------------------------------------------- */
 
+/*
+ * Create a new sub-directory in the current working directory.
+ *
+ * Steps:
+ *   1. Reject reserved names ("." and "..").
+ *   2. Reject if a file or directory with that name already exists.
+ *   3. Allocate a 128 KB block from the FAT for the new directory.
+ *   4. Write a ".." entry in slot 0 of the new block, pointing back to
+ *      the parent's cwd_sector so "cd .." can navigate home.
+ *   5. Add an ATTR_DIR entry for the new directory in the parent.
+ */
 void dir_create(const char *name) {
-    /* "." and ".." are reserved for navigation and cannot be created. */
+    /* "." and ".." are navigation aliases, not creatable names */
     if (name[0] == '.' &&
         (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) {
         vga_puts("mkdir: reserved name: "); vga_puts(name); vga_putchar('\n');
@@ -91,12 +115,13 @@ void dir_create(const char *name) {
         return;
     }
 
-    /* A sub-directory is its own FAT chain. Allocate its first block and seed
-       it with a ".." entry (always slot 0) pointing back at the parent, so
-       "cd .." can find its way home later. */
-    uint16_t blk = fat_alloc();   /* blk is a block number (0-31) */
+    /* Allocate one 128 KB block — the new directory lives entirely within it */
+    uint16_t blk = fat_alloc();
     if (blk == FAT_EOC) { vga_puts("mkdir: disk full\n"); return; }
 
+    /* Write the ".." entry into the first sector of the new block.
+       first_block stores the parent's cwd_sector (a sector number, not a block).
+       dir_change uses this to navigate back up. */
     uint16_t blk_sector = block_to_sector(blk);
     uint8_t buf[SECTOR_SIZE];
     mem_set(buf, 0, SECTOR_SIZE);
@@ -104,11 +129,11 @@ void dir_create(const char *name) {
     name_to_fat(dotdot->name, "..", 8);
     dotdot->ext[0] = dotdot->ext[1] = dotdot->ext[2] = ' ';
     dotdot->attr        = ATTR_DIR;
-    dotdot->first_block = cwd_sector;   /* store parent's sector for cd .. */
+    dotdot->first_block = cwd_sector;  /* parent's sector for "cd .." navigation */
     dotdot->size        = 0;
     sector_write(blk_sector, buf);
 
-    /* Record the new directory in the parent directory. */
+    /* Add the new directory's entry in the parent directory */
     dir_entry_t *slot = dir_find_free(cwd_sector);
     if (!slot) { vga_puts("mkdir: directory full\n"); fat_free_chain(blk); return; }
 
@@ -116,7 +141,7 @@ void dir_create(const char *name) {
     name_to_fat(slot->name, name, 8);
     slot->ext[0] = slot->ext[1] = slot->ext[2] = ' ';
     slot->attr        = ATTR_DIR;
-    slot->first_block = blk;
+    slot->first_block = blk;  /* block number (not sector) for data access */
     slot->size        = 0;
     dir_flush();
     kprintf("Created directory '%s'.\n", name);
@@ -126,20 +151,29 @@ void dir_create(const char *name) {
  * dir_change
  * --------------------------------------------------------------------- */
 
+/*
+ * Change the current working directory.
+ *
+ * "."  — refers to the current directory, no-op.
+ * ".." — read the ".." entry from slot 0 of the current directory,
+ *        which stores the parent's cwd_sector, and jump to it.
+ * name — look up the named entry, convert its block number to a sector,
+ *        and set cwd_sector to the first sector of that block.
+ */
 void dir_change(const char *name) {
-    /* "." refers to the current directory — nothing to do. */
-    if (name[0] == '.' && name[1] == '\0') return;
+    if (name[0] == '.' && name[1] == '\0') return;  /* "." — stay here */
 
-    /* ".." follows the parent pointer stored in slot 0 of this directory. */
     if (name[0] == '.' && name[1] == '.' && name[2] == '\0') {
+        /* ".." — navigate to parent */
         if (cwd_sector == ROOT_DIR_SECTOR) {
             vga_puts("Already at root directory.\n");
             return;
         }
+        /* Slot 0 of any sub-directory holds the ".." entry with the parent sector */
         uint8_t buf[SECTOR_SIZE];
         sector_read(cwd_sector, buf);
-        dir_entry_t *dotdot = (dir_entry_t *)buf;   /* slot 0 == ".." */
-        cwd_sector = dotdot->first_block;
+        dir_entry_t *dotdot = (dir_entry_t *)buf;
+        cwd_sector = dotdot->first_block;  /* restore parent's cwd_sector */
         path_pop();
         return;
     }
@@ -149,7 +183,8 @@ void dir_change(const char *name) {
         vga_puts("cd: not a directory: "); vga_puts(name); vga_putchar('\n');
         return;
     }
-    cwd_sector = block_to_sector(e->first_block);   /* convert block number to sector */
+    /* Convert the stored block number to the first sector of that block */
+    cwd_sector = block_to_sector(e->first_block);
     path_push(name);
 }
 
@@ -157,6 +192,11 @@ void dir_change(const char *name) {
  * dir_delete
  * --------------------------------------------------------------------- */
 
+/*
+ * Remove an empty sub-directory.
+ * Refuses if the directory still contains any files or sub-directories,
+ * to prevent orphaning their FAT chains. Use "rm -r" for non-empty dirs.
+ */
 void dir_delete(const char *name) {
     dir_entry_t *e = dir_find(name, cwd_sector);
     if (!e || e->attr != ATTR_DIR) {
@@ -167,7 +207,7 @@ void dir_delete(const char *name) {
         vga_puts("rmdir: directory not empty: "); vga_puts(name); vga_putchar('\n');
         return;
     }
-    fat_free_chain(e->first_block);   /* reclaim the directory's own blocks */
+    fat_free_chain(e->first_block);   /* free the directory's 128 KB block */
     mem_set(e, 0, sizeof(dir_entry_t));
     dir_flush();
     kprintf("Deleted directory '%s'.\n", name);

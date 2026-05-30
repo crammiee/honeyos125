@@ -1,7 +1,11 @@
 #ifndef TYPES_H
 #define TYPES_H
 
-/* Fixed-width integer types — no standard library in freestanding mode */
+/*
+ * Fixed-width integer types.
+ * In freestanding mode there is no standard library, so we define our own
+ * rather than including <stdint.h> which requires a hosted environment.
+ */
 typedef unsigned char      uint8_t;
 typedef unsigned short     uint16_t;
 typedef unsigned int       uint32_t;
@@ -12,8 +16,8 @@ typedef signed short       int16_t;
 typedef signed int         int32_t;
 typedef signed long long   int64_t;
 
-typedef uint32_t size_t;
-typedef int32_t  ssize_t;
+typedef uint32_t size_t;   /* size of objects in memory */
+typedef int32_t  ssize_t;  /* signed counterpart for error returns */
 
 #define NULL   ((void *)0)
 #define TRUE   1
