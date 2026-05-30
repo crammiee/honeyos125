@@ -2,6 +2,16 @@
 
 A minimal x86 hobby OS built from scratch. Boots via a custom MBR, runs a freestanding C kernel, and exposes an interactive shell with a FAT-based linked-allocation filesystem.
 
+## Table of Contents
+
+- [Features](#features)
+- [Dependencies](#dependencies)
+- [Download](#download)
+- [Getting Started](#getting-started)
+- [Build & Run](#build--run)
+- [Running in a VM](#running-in-a-vm)
+- [Shell Commands](#shell-commands)
+
 ## Features
 
 ### Bootloader
