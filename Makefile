@@ -59,16 +59,20 @@ run: all
 
 run-debug: all
 	$(QEMU) -hda disk.img -display curses -no-reboot \
-	        -serial stdio -d int,cpu_reset 2>&1 | tee qemu.log
+	        -serial file:serial.log -D qemu.log -d int,cpu_reset
+	@echo "[OK] serial output -> serial.log  QEMU debug log -> qemu.log"
 
-# Wrap the floppy-sized disk image in a bootable ISO (floppy-emulation
-# El Torito) so the custom MBR boots straight from a CD/DVD in any VM. The ISO
-# is fully standalone: when no hard disk is attached, HoneyOS runs an in-RAM
-# filesystem (changes are not saved). Attach disk.img as a hard disk too and the
-# filesystem persists there instead — see run-iso / run-iso-persist.
-iso: disk.img
+# El Torito floppy emulation requires exactly 1.2, 1.44, or 2.88 MB images.
+# disk.img is 4 MB so it cannot be used directly as the boot image. Instead,
+# build a separate minimal 1.44 MB floppy image (bootloader + kernel only) for
+# the ISO. The filesystem always runs in RAM when booted from CD with no disk.
+$(BUILD)/iso/honeyos.img: $(BUILD)/boot.bin $(BUILD)/kernel.bin
 	@mkdir -p $(BUILD)/iso
-	cp disk.img $(BUILD)/iso/honeyos.img
+	dd if=/dev/zero of=$@ bs=512 count=2880 2>/dev/null
+	dd if=$(BUILD)/boot.bin of=$@ conv=notrunc 2>/dev/null
+	dd if=$(BUILD)/kernel.bin of=$@ bs=512 seek=1 conv=notrunc 2>/dev/null
+
+iso: $(BUILD)/iso/honeyos.img
 	xorriso -as mkisofs -quiet -o honeyos.iso \
 	        -b honeyos.img -c boot.cat $(BUILD)/iso
 	@echo "[OK] honeyos.iso ready (boots standalone; RAM filesystem if no disk)"
@@ -93,4 +97,4 @@ artifacts: iso honeyos.vdi
 	@echo "[OK] artifacts ready: disk.img  honeyos.iso  honeyos.vdi"
 
 clean:
-	rm -rf $(BUILD) disk.img honeyos.iso honeyos.vdi qemu.log
+	rm -rf $(BUILD) disk.img honeyos.iso honeyos.vdi qemu.log serial.log

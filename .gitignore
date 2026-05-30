@@ -5,3 +5,4 @@ honeyos.iso
 *.o
 qemu.log
 honeyos.vdi
+serial.log
