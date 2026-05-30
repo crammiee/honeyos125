@@ -73,7 +73,7 @@ void file_write(const char *name) {
     if (old && old->attr == ATTR_FILE) {
         fat_free_chain(old->first_block);
         mem_set(old, 0, sizeof(dir_entry_t));
-        dir_flush(cwd_sector);
+        dir_flush();
     }
 
     vga_puts("Enter text (type '.' on a line by itself to finish):\n");
@@ -124,7 +124,7 @@ void file_write(const char *name) {
     slot->attr        = ATTR_FILE;
     slot->first_block = first;
     slot->size        = total;
-    dir_flush(cwd_sector);
+    dir_flush();
     kprintf("Wrote %u bytes to '%s'.\n", total, name);
 }
 
@@ -144,7 +144,7 @@ void file_edit(const char *name) {
 
     fat_free_chain(e->first_block);
     mem_set(e, 0, sizeof(dir_entry_t));
-    dir_flush(cwd_sector);
+    dir_flush();
     file_write(name);
 }
 
@@ -158,8 +158,14 @@ void file_delete(const char *name) {
         vga_puts("rm: not found: "); vga_puts(name); vga_putchar('\n');
         return;
     }
-    if (e->attr == ATTR_FILE) fat_free_chain(e->first_block);
+    /* Refuse to remove a non-empty directory, so we never orphan the blocks
+       its children point to. */
+    if (e->attr == ATTR_DIR && !dir_is_empty(e->first_block)) {
+        vga_puts("rm: directory not empty: "); vga_puts(name); vga_putchar('\n');
+        return;
+    }
+    fat_free_chain(e->first_block);   /* frees a file's data or a dir's blocks */
     mem_set(e, 0, sizeof(dir_entry_t));
-    dir_flush(cwd_sector);
+    dir_flush();
     kprintf("Deleted '%s'.\n", name);
 }

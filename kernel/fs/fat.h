@@ -61,6 +61,9 @@ typedef struct {
 
 extern uint16_t cwd_sector;  /* first sector of the current working directory */
 
+#define CWD_PATH_MAX 128
+extern char cwd_path[CWD_PATH_MAX];  /* printable path, e.g. "root/subdir" */
+
 /* -----------------------------------------------------------------------
  * API
  * --------------------------------------------------------------------- */
@@ -75,8 +78,10 @@ void     fat_free_chain(uint16_t first);
 uint16_t fat_next(uint16_t block);
 void     fat_set(uint16_t block, uint16_t val);
 
-dir_entry_t *dir_find     (const char *name, uint16_t dir_sec);
-dir_entry_t *dir_find_free(uint16_t dir_sec);
-void         dir_flush    (uint16_t dir_sec);
+dir_entry_t *dir_find       (const char *name, uint16_t dir_sec);
+dir_entry_t *dir_find_free  (uint16_t dir_sec);
+void         dir_flush      (void);
+uint16_t     dir_next_sector(uint16_t first, uint16_t cur);
+int          dir_is_empty   (uint16_t dir_first);
 
 #endif /* FAT_H */
