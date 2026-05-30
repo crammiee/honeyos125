@@ -268,6 +268,18 @@ libc, runtime, or ELF header in the final image:
   kernel starting at sector 1, producing `disk.img`.
 - `make run` boots it under `qemu-system-i386 -hda disk.img -display curses`;
   `make run-debug` adds serial output and a CPU/interrupt trace to `qemu.log`.
+- `make iso` wraps the floppy-sized `disk.img` in a bootable ISO
+  (`honeyos.iso`) via `xorriso` using floppy-emulation El Torito, so the custom
+  MBR boots from a CD/DVD in any VM. The filesystem still lives on the ATA hard
+  disk, so `make run-iso` boots the ISO (CD) together with `disk.img` (hard
+  disk); files persist on the disk exactly as in the `-hda` boot.
+
+### Boot targets at a glance
+
+| Command | CD/DVD | Hard disk | Filesystem persists? |
+|---------|--------|-----------|----------------------|
+| `make run` | — | `disk.img` | yes |
+| `make run-iso` | `honeyos.iso` | `disk.img` | yes |
 
 ---
 

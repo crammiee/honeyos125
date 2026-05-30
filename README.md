@@ -128,11 +128,32 @@ make run-debug
 # or
 ./run.sh --debug
 
+# Build a bootable ISO, then boot it (CD) together with the hard disk
+make run-iso
+# build the ISO only:
+make iso
+
 # Clean build artifacts
 make clean
 ```
 
 > QEMU opens in curses mode inside the terminal. Press `Alt+2` to access the QEMU monitor, `Ctrl+A X` to quit.
+
+### Running in a VM (VirtualBox / VMware / QEMU)
+
+Two artifacts can be booted:
+
+- **`disk.img`** — the raw hard-disk image. Attach it as a **hard disk** and boot
+  from it. The filesystem is persistent (changes survive reboots). In QEMU:
+  `make run`. For VirtualBox/VMware, convert it first, e.g.
+  `qemu-img convert -O vdi disk.img honeyos.vdi` (or `-O vmdk … honeyos.vmdk`),
+  and attach the result as the hard disk.
+- **`honeyos.iso`** — a bootable CD/DVD image (`make iso`), handy when a VM only
+  lets you "insert a disc." It is a floppy-emulation El Torito image, so the
+  custom MBR boots straight from the CD. HoneyOS still keeps its filesystem on the
+  ATA hard disk, so attach **both** the ISO (as CD/DVD) **and** `disk.img` (as
+  hard disk); `make run-iso` wires this up in QEMU. Booting the ISO with no hard
+  disk attached is not supported — the filesystem needs a writable disk.
 
 ## Shell Commands
 

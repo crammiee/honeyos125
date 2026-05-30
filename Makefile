@@ -28,7 +28,7 @@ ASM_OBJS := $(patsubst %.asm, $(BUILD)/%.o, $(ASM_SRCS))
 
 ALL_OBJS := $(ASM_OBJS) $(C_OBJS)
 
-.PHONY: all run clean
+.PHONY: all run run-debug run-iso iso clean
 
 all: disk.img
 
@@ -61,5 +61,21 @@ run-debug: all
 	$(QEMU) -hda disk.img -display curses -no-reboot \
 	        -serial stdio -d int,cpu_reset 2>&1 | tee qemu.log
 
+# Wrap the floppy-sized disk image in a bootable ISO (floppy-emulation
+# El Torito) so the custom MBR boots from a CD/DVD in any VM. HoneyOS keeps its
+# filesystem on the ATA hard disk, so the ISO is meant to be booted together
+# with disk.img attached as a hard disk (see run-iso); the CD just carries the
+# bootable kernel, and the disk holds (and persists) your files.
+iso: disk.img
+	@mkdir -p $(BUILD)/iso
+	cp disk.img $(BUILD)/iso/honeyos.img
+	xorriso -as mkisofs -quiet -o honeyos.iso \
+	        -b honeyos.img -c boot.cat $(BUILD)/iso
+	@echo "[OK] honeyos.iso ready (boot from CD, filesystem on the hard disk)"
+
+run-iso: iso
+	$(QEMU) -cdrom honeyos.iso -hda disk.img -boot d \
+	        -display curses -no-reboot
+
 clean:
-	rm -rf $(BUILD) disk.img qemu.log
+	rm -rf $(BUILD) disk.img honeyos.iso qemu.log
